@@ -9,6 +9,7 @@ import {
   initialTrackerState,
   applyAnalystPayload,
   applyGameLogDelta,
+  applyFeedAwardDelta,
   normalizeColonistChatHex,
   inferDefiniteLocalWireColorId,
 } from "./colonist-tracker.js";
@@ -139,7 +140,10 @@ chrome.runtime.onMessage.addListener((msg) => {
 
     const isWs = p.kind === "ws-message" || p.kind === "ws-send";
     const isLog =
-      p.kind === "game-log" || p.kind === "game-log-meta" || p.kind === "game-log-line";
+      p.kind === "game-log" ||
+      p.kind === "game-log-meta" ||
+      p.kind === "game-log-line" ||
+      p.kind === "game-log-vp";
     const showInPanel = isWs || isLog || p.kind === "inject-ready" || p.kind === "ws-open";
     const isHandsLogLine = p.kind === "game-log-line" || p.kind === "game-log";
 
@@ -208,6 +212,9 @@ chrome.runtime.onMessage.addListener((msg) => {
             cards,
           });
         }
+      }
+      if (p.kind === "game-log-vp") {
+        applyFeedAwardDelta(tracker, p.detail);
       }
     } else if (isWs) {
       applyAnalystPayload(tracker, p);

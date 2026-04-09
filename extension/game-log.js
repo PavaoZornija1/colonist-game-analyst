@@ -569,6 +569,86 @@
     }
   }
 
+  /**
+   * Longest Road / Largest Army (+VP) from activity feed — wire `victoryPointsPublic` is often incomplete.
+   */
+  function sendFeedAward(detail) {
+    if (!detail || typeof detail !== "object") return;
+    const hasPlayer =
+      typeof detail.player === "string" && detail.player.trim().length > 0;
+    if (!detail.colorHex && !detail.targetYou && !hasPlayer) return;
+    const d = {
+      ...(detail.colorHex ? { colorHex: detail.colorHex } : {}),
+      ...(detail.targetYou ? { targetYou: true } : {}),
+      ...(hasPlayer ? { player: detail.player.trim() } : {}),
+      ...(typeof detail.message === "string" && detail.message.trim()
+        ? { message: detail.message.trim() }
+        : {}),
+      ...(detail.setLocalDisplayName ? { setLocalDisplayName: true } : {}),
+    };
+    if (detail.longestRoadVp !== undefined) d.longestRoadVp = detail.longestRoadVp;
+    if (detail.largestArmyVp !== undefined) d.largestArmyVp = detail.largestArmyVp;
+    if (detail.extraVp !== undefined) d.extraVp = detail.extraVp;
+    const payload = {
+      source: MESSAGE_SOURCE,
+      t: Date.now(),
+      kind: "game-log-vp",
+      detail: d,
+    };
+    try {
+      if (!chrome.runtime?.id) return;
+      chrome.runtime
+        .sendMessage({ type: "ANALYST_PAGE_EVENT", payload })
+        .catch((err) => {
+          const msg = err?.message || String(err);
+          if (msg.includes("Extension context invalidated")) return;
+          console.warn("[Colonist analyst] game-log-vp sendMessage failed:", msg);
+        });
+    } catch (e) {
+      const msg = e?.message || String(e);
+      if (msg.includes("Extension context invalidated")) return;
+      console.warn("[Colonist analyst] game-log-vp sendMessage failed:", msg);
+    }
+  }
+
+  /**
+   * Feed lines like “PavaoZ received Longest Road … (+2 VPs)” / “lost Largest Army”.
+   */
+  function parseFeedAwards(el) {
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
+    const text = (part.textContent || "").replace(/\s+/g, " ").trim();
+    const lower = text.toLowerCase();
+    const isLR = /\blongest\s+road\b/i.test(lower);
+    const isLA = /\blargest\s+army\b/i.test(lower);
+    if (!isLR && !isLA) return;
+
+    const isLost = /\blost\b/i.test(lower);
+    const isReceived = /\breceived\b/i.test(lower);
+    if (!isLost && !isReceived) return;
+
+    const actor = extractLeadActor(part);
+    const dest = actorDestination(el, actor);
+    if (!dest) return;
+
+    let vpBonus = 2;
+    const vm = text.match(/\(\s*\+(\d+)\s*vps?\s*\)/i);
+    if (vm) {
+      const n = Number(vm[1]);
+      if (Number.isFinite(n) && n > 0) vpBonus = n;
+    }
+
+    const msg = feedHandMessage(root);
+    if (isLR) {
+      if (isLost) sendFeedAward({ ...dest, longestRoadVp: 0, message: msg });
+      else if (isReceived) sendFeedAward({ ...dest, longestRoadVp: vpBonus, message: msg });
+    }
+    if (isLA) {
+      if (isLost) sendFeedAward({ ...dest, largestArmyVp: 0, message: msg });
+      else if (isReceived) sendFeedAward({ ...dest, largestArmyVp: vpBonus, message: msg });
+    }
+  }
+
   function isMatchStartLine(text) {
     const s = String(text || "").toLowerCase();
     return s.includes("happy settling");
@@ -786,8 +866,23 @@
   function sniffLocalPlayerFromRow(el) {
     if (!rowFromLoggedInUser(el)) return;
     const part = el.querySelector('[class*="messagePart"]') || el;
+    const raw = lineText(part);
+    const lead = raw.trimStart().toLowerCase();
+    /**
+     * Colonist shows the logged-in avatar on many feed rows, including other players’ lines.
+     * We must only sniff identity from messages about *you*, not “Jessie got …”.
+     */
+    if (!lead.startsWith("you")) return;
+    if (/^you\s+stole\b/i.test(lead)) return;
+    const safeYouVerb =
+      /^you\s+(got|received|starting|discarded|built|bought|used|moved|placed)\b/i.test(
+        lead,
+      );
+    if (!safeYouVerb) return;
     const actor = extractLeadActor(part);
-    if (actor.name) sendLocalMeta(actor.name, actor.hex);
+    const name = (actor.name || "").trim();
+    if (!name || normalizePlayerNameToken(name) === "you") return;
+    sendLocalMeta(name, actor.hex || "");
   }
 
   function actorDestination(el, actor) {
@@ -967,11 +1062,36 @@
     const lower = raw.toLowerCase();
     const i = lower.indexOf("discarded");
     if (i < 0) return;
+    /** Ignore “… to discard …” bot lines — require “Name discarded”. */
+    const trimmedDiscard = raw.trim().replace(/\s+/g, " ");
+    if (!/\S+\s+discarded\b/i.test(trimmedDiscard)) return;
     const actor = extractLeadActor(part);
-    const dest = actorDestination(el, actor);
+    let dest = actorDestination(el, actor);
+    if (!dest) {
+      const m = /^(.+?)\s+discarded\b/i.exec(trimmedDiscard);
+      if (m) {
+        const guess = m[1].trim();
+        const gn = normalizePlayerNameToken(guess);
+        if (gn === "you") dest = { targetYou: true };
+        else {
+          const hx = hexForPlayerNameLoose(root, guess);
+          if (hx)
+            dest = {
+              colorHex: hx,
+              player: guess.split(/\s+/)[0] || guess,
+            };
+        }
+      }
+    }
     if (!dest) return;
     const c = cardsDelta();
     addFromImgsFeedRow(root, -1, c);
+    if (deltaSum(c) === 0) {
+      addFromHtmlFragments((root.innerHTML || "").split("<img"), -1, c);
+    }
+    if (deltaSum(c) === 0) {
+      addFromInlineAlts(root.innerHTML || "", -1, c);
+    }
     if (deltaSum(c) === 0) return;
     sendHand({ ...dest, cards: c, message: feedHandMessage(root) });
   }
@@ -1175,7 +1295,9 @@
         if (!stealerDest) return;
       }
     }
-    const victimName = text.slice(fromAt + SNIPS.stoleFrom.length).trim();
+    let victimName = text.slice(fromAt + SNIPS.stoleFrom.length).trim();
+    victimName = victimName.replace(/[\u200e\u200f\u202a-\u202e]/g, "").trim();
+    victimName = victimName.split(/\r?\n/)[0].trim();
     if (!victimName) return;
     const victimNorm = normalizePlayerNameToken(victimName);
     const victimHex = victimNorm === "you" ? "" : hexForPlayerNameLoose(root, victimName);
@@ -1255,6 +1377,7 @@
       parsePlayerTrade(el, prev);
       parseStoleLine(el);
       parseStoleLegacy(el, prev);
+      parseFeedAwards(el);
     } catch (e) {
       const m = e?.message || String(e);
       console.warn("[Colonist analyst] game-log processLine:", m);

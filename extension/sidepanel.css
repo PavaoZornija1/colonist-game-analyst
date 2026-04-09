@@ -317,6 +317,40 @@ body {
   line-height: 1.4;
 }
 
+.hands-intro {
+  margin: 0 0 14px;
+  padding: 12px 14px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+.hands-intro-lead {
+  margin: 0 0 10px;
+}
+
+.hands-intro-p {
+  margin: 0 0 10px;
+}
+
+.hands-intro-p:last-child {
+  margin-bottom: 0;
+}
+
+.hands-intro-highlight {
+  padding-top: 8px;
+  margin-top: 8px;
+  border-top: 1px dashed var(--border-strong);
+}
+
+.hands-intro strong {
+  font-weight: 650;
+  color: var(--text);
+}
+
 .hands-log-note {
   margin-top: 10px;
 }

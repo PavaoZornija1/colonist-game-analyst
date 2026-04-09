@@ -9,6 +9,8 @@ import {
   feedHandRowForColorId,
   inferDefiniteLocalWireColorId,
   reconcileUnknownFromTypedDeficits,
+  feedVpAwardsRawTotal,
+  feedVpAwardsForDisplayColumn,
 } from "../extension/colonist-tracker.js";
 
 test("normalizeColonistChatHex normalizes shorthand and casing", () => {
@@ -76,6 +78,16 @@ test("applyGameLogDelta targetYou infers hex with 0-based player keys", () => {
   };
   applyGameLogDelta(state, { targetYou: true, cards: { grain: 1 } });
   assert.equal(state.logHandByColorHex["#e27174"].grain, 1);
+});
+
+test("applyGameLogDelta targetYou falls back to resolveFeedHexForColorId (seat swap)", () => {
+  const state = initialTrackerState();
+  state.localWireColorId = 2;
+  state.logLocalPlayerColorHex = "#e27174";
+  state.players["1"] = { colorId: 1 };
+  state.players["2"] = { colorId: 2 };
+  applyGameLogDelta(state, { targetYou: true, cards: { wool: 1 } });
+  assert.equal(state.logHandByColorHex["#e27174"].wool, 1);
 });
 
 test("applyGameLogDelta resolves victim row by player when colorHex missing", () => {
@@ -259,4 +271,56 @@ test("applyParsedMessage locks local wire color id after first type-4", () => {
   assert.equal(state.localWireColorIdLocked, true);
   applyParsedMessage(state, { data: { type: 4, payload: { playerColor: 2 } } });
   assert.equal(state.localWireColorId, 1);
+});
+
+test("victoryPointsState partial wire patches merge (city/settlement components)", () => {
+  const state = initialTrackerState();
+  applyParsedMessage(state, {
+    data: {
+      payload: {
+        diff: { playerStates: { "1": { victoryPointsState: { "4": 1 } } } },
+      },
+    },
+  });
+  assert.equal(state.players["1"].victoryPointsPublic, 1);
+  applyParsedMessage(state, {
+    data: {
+      payload: {
+        diff: { playerStates: { "1": { victoryPointsState: { "3": 2 } } } },
+      },
+    },
+  });
+  assert.equal(state.players["1"].victoryPointsPublic, 3);
+  assert.deepEqual(state.players["1"].victoryPointsState, { "3": 2, "4": 1 });
+});
+
+test("feedVpAwardsForDisplayColumn keeps feed LR when wire VP matches merged (undercount)", () => {
+  const pl = {
+    victoryPointsPublic: 3,
+    victoryPointsState: { "4": 1, "3": 2 },
+    hasLongestRoad: true,
+    feedLongestRoadVp: 2,
+  };
+  assert.equal(feedVpAwardsRawTotal(pl), 2);
+  assert.equal(feedVpAwardsForDisplayColumn(pl), 2);
+});
+
+test("feedVpAwardsForDisplayColumn drops feed LR when public exceeds merged sum", () => {
+  const pl = {
+    victoryPointsPublic: 5,
+    victoryPointsState: { "4": 1, "3": 2 },
+    hasLongestRoad: true,
+    feedLongestRoadVp: 2,
+  };
+  assert.equal(feedVpAwardsForDisplayColumn(pl), 0);
+});
+
+test("feedVpAwardsForDisplayColumn drops feed LR when merged has many keys (wire complete)", () => {
+  const pl = {
+    victoryPointsPublic: 5,
+    victoryPointsState: { a: 1, b: 2, c: 2 },
+    hasLongestRoad: true,
+    feedLongestRoadVp: 2,
+  };
+  assert.equal(feedVpAwardsForDisplayColumn(pl), 0);
 });

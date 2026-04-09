@@ -1,9 +1,10 @@
 {
   "name": "colonist-game-analyst",
-  "version": "0.5.10",
+  "version": "0.5.37",
   "private": true,
   "type": "module",
   "scripts": {
-    "test": "node --test"
+    "test": "node --test",
+    "pack-extension": "cd extension && zip -r ../colonist-game-analyst-extension.zip . -x '*.DS_Store'"
   }
 }

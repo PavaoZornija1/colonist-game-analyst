@@ -1,0 +1,48 @@
+# Changelog
+
+All notable changes to **Colonist Game Analyst** are tracked here. The **shipping version** for the Chrome extension is the `version` field in [`extension/manifest.json`](extension/manifest.json). The repo `package.json` `version` is kept aligned for developer reference.
+
+## [0.5.37] - 2026-04-09
+
+### Added
+
+- Extension **icons** (16 / 48 / 128) in `extension/icons/`; `manifest` `icons` + `action.default_icon`.
+- **Chrome Web Store** helper: [`docs/CHROME_WEB_STORE.md`](docs/CHROME_WEB_STORE.md) (listing copy, permissions text, zip instructions).
+- Hostable **[`docs/privacy-policy.html`](docs/privacy-policy.html)** for the store privacy URL (add contact + publish over HTTPS).
+- **`npm run pack-extension`** — zip the `extension` folder for upload.
+
+## [0.5.36] - 2026-04-09
+
+### Added
+
+- `CHANGELOG.md` and release/version notes in the README (single source of truth: **manifest**).
+- **VP double-count guard:** the Victory total column (`feedVpAwardsForDisplayColumn`) skips feed LR/LA +VP when the wire already reflects those bonuses (`hasLongestRoad` / `hasLargestArmy`, `victoryPointsPublic` vs merged `victoryPointsState`).
+- Wire fields **`hasLongestRoad`** and **`hasLargestArmy`** read from mechanic state when the server sends them.
+
+### Changed
+
+- npm package version aligned with extension manifest for release discipline.
+
+## [0.5.35] - 2026-04-09
+
+### Fixed
+
+- Merge **partial** `victoryPointsState` wire patches per player before summing, so city VP (and other keys) are not dropped when the server sends incremental diffs.
+
+### Changed
+
+- Quick insights: “scarcest in bank” only when min supply is below max (avoid noise when all piles are equal).
+
+## [0.5.34] - 2026-04-09
+
+### Added
+
+- Activity feed parsing for **Longest Road** / **Largest Army** `received` / `lost` (+ optional `+N VP`), merged into Victory & awards (`game-log-vp`, `feedLongestRoadVp`, `feedLargestArmyVp`).
+
+### Changed
+
+- Victory table VP column: wire + feed; LR/LA cells show wire metric plus feed award when present.
+
+---
+
+Earlier history: see git log.

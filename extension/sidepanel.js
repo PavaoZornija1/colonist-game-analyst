@@ -17,6 +17,8 @@ import {
   colorIdFromColonistChatHex,
   resolveFeedHexForColorId,
   COLONIST_CHAT_COLOR_LABEL_BY_HEX,
+  feedVpAwardsRawTotal,
+  feedVpAwardsForDisplayColumn,
 } from "./colonist-tracker.js";
 
 const SESSION_KEY = "colonistAnalystEvents";
@@ -57,6 +59,13 @@ const HANDS_LABEL_MODE_KEY = "colonistAnalystHandsLabelMode";
 const HANDS_TABLE_HEAD =
   '<thead><tr><th scope="col">Player</th><th scope="col" class="col-num">Lumber</th><th scope="col" class="col-num">Brick</th><th scope="col" class="col-num">Wool</th><th scope="col" class="col-num">Grain</th><th scope="col" class="col-num">Ore</th><th scope="col" class="col-num">Unknown</th></tr></thead>';
 
+/** Highlight when Unknown column is not exactly 0 (includes +1, -1, etc.). */
+function feedHandRowHasNonZeroUnknown(r) {
+  const raw = r?.unknown;
+  const u = typeof raw === "bigint" ? Number(raw) : Number(raw);
+  return Number.isFinite(u) && u !== 0;
+}
+
 function colorLabelForSeat(state, colorId) {
   const hx = resolveFeedHexForColorId(state, colorId);
   if (hx && COLONIST_CHAT_COLOR_LABEL_BY_HEX[hx]) return COLONIST_CHAT_COLOR_LABEL_BY_HEX[hx];
@@ -96,7 +105,7 @@ function renderUnifiedHands(state) {
           ? escapeHtml(colorLabelForSeat(state, cid))
           : escapeHtml(`Feed ${hex}`);
       const tr = document.createElement("tr");
-      if (Number(r.unknown) !== 0) tr.classList.add("hands-row--uncertain");
+      if (feedHandRowHasNonZeroUnknown(r)) tr.classList.add("hands-row--uncertain");
       tr.innerHTML = `<td>${label}</td><td class="col-num">${r.lumber ?? 0}</td><td class="col-num">${r.brick ?? 0}</td><td class="col-num">${r.wool ?? 0}</td><td class="col-num">${r.grain ?? 0}</td><td class="col-num">${r.ore ?? 0}</td><td class="col-num">${r.unknown ?? 0}</td>`;
       wtb.appendChild(tr);
     }
@@ -119,7 +128,7 @@ function renderUnifiedHands(state) {
     const head = handsLabelMode === "names" && seenName ? seenName : colorLabelForSeat(state, colorId);
     const label = `${escapeHtml(head)} <span class="muted">(#${escapeHtml(id)})</span>`;
     const tr = document.createElement("tr");
-    if (Number(r.unknown) !== 0) tr.classList.add("hands-row--uncertain");
+    if (feedHandRowHasNonZeroUnknown(r)) tr.classList.add("hands-row--uncertain");
     tr.innerHTML = `<td>${label}</td><td class="col-num">${r.lumber ?? 0}</td><td class="col-num">${r.brick ?? 0}</td><td class="col-num">${r.wool ?? 0}</td><td class="col-num">${r.grain ?? 0}</td><td class="col-num">${r.ore ?? 0}</td><td class="col-num">${r.unknown ?? 0}</td>`;
     wtb.appendChild(tr);
   }
@@ -416,6 +425,27 @@ function renderDiceHistory(state) {
   }
 }
 
+function displayVictoryPoints(pl) {
+  if (!pl || typeof pl !== "object") return null;
+  const add = feedVpAwardsForDisplayColumn(pl);
+  const base = pl.victoryPointsPublic;
+  if (base != null && Number.isFinite(Number(base))) return Number(base) + add;
+  if (add > 0) return add;
+  return null;
+}
+
+function formatRoadArmyCell(wireVal, feedVp) {
+  const f = Number(feedVp) || 0;
+  const w =
+    wireVal != null && wireVal !== ""
+      ? escapeHtml(String(wireVal))
+      : "";
+  if (w && f > 0) return `${w} <span class="muted">(+${f} VP)</span>`;
+  if (w) return w;
+  if (f > 0) return `<span class="muted">+${f} VP</span>`;
+  return "—";
+}
+
 function renderVP(state) {
   vpWrapEl.textContent = "";
   const players = state.players && typeof state.players === "object" ? state.players : {};
@@ -425,7 +455,8 @@ function renderVP(state) {
     return (
       pl.victoryPointsPublic != null ||
       pl.longestRoad != null ||
-      pl.largestArmy != null
+      pl.largestArmy != null ||
+      feedVpAwardsRawTotal(pl) > 0
     );
   });
   if (rows.length === 0) {
@@ -439,13 +470,17 @@ function renderVP(state) {
   const tbl = document.createElement("table");
   tbl.className = "data-table";
   tbl.innerHTML =
-    '<thead><tr><th scope="col">Player</th><th scope="col" class="col-num">VP (sum)</th><th scope="col" class="col-num">Longest road</th><th scope="col" class="col-num">Largest army</th></tr></thead>';
+    '<thead><tr><th scope="col">Player</th><th scope="col" class="col-num">VP (wire + feed)</th><th scope="col" class="col-num">Longest road</th><th scope="col" class="col-num">Largest army</th></tr></thead>';
   const tb = document.createElement("tbody");
   for (const id of rows) {
     const pl = players[id];
     const tr = document.createElement("tr");
     const name = colorLabelForSeat(state, pl.colorId ?? Number(id));
-    tr.innerHTML = `<td>${escapeHtml(name)} <span class="muted">(#${escapeHtml(id)})</span></td><td class="col-num">${pl.victoryPointsPublic ?? "—"}</td><td class="col-num">${pl.longestRoad ?? "—"}</td><td class="col-num">${pl.largestArmy ?? "—"}</td>`;
+    const vpShow = displayVictoryPoints(pl);
+    const vpCell = vpShow != null ? String(vpShow) : "—";
+    const lrCell = formatRoadArmyCell(pl.longestRoad, pl.feedLongestRoadVp);
+    const laCell = formatRoadArmyCell(pl.largestArmy, pl.feedLargestArmyVp);
+    tr.innerHTML = `<td>${escapeHtml(name)} <span class="muted">(#${escapeHtml(id)})</span></td><td class="col-num">${vpCell === "—" ? "—" : escapeHtml(vpCell)}</td><td class="col-num">${lrCell}</td><td class="col-num">${laCell}</td>`;
     tb.appendChild(tr);
   }
   tbl.appendChild(tb);
@@ -501,6 +536,11 @@ function renderTracker(raw) {
   if ((state.logEventCount ?? 0) > 0) {
     parts.push(
       `Log deltas: ${state.logEventCount} · ${state.logUpdatedAt != null ? new Date(state.logUpdatedAt).toLocaleTimeString() : ""}`,
+    );
+  }
+  if (state.vpFeedUpdatedAt != null) {
+    parts.push(
+      `Feed VP: ${new Date(state.vpFeedUpdatedAt).toLocaleTimeString()}`,
     );
   }
   trackerMetaEl.textContent = parts.join(" · ");
@@ -742,8 +782,8 @@ function renderHandsGameLog(rawEvents) {
     .map((ev) => String(ev.detail.message).trim());
   const rows = events
     .filter((ev) => ev?.kind === "game-log-line" && typeof ev?.detail?.message === "string")
-    .slice(0, 120)
-    .reverse();
+    .sort((a, b) => (Number(b.t) || 0) - (Number(a.t) || 0))
+    .slice(0, 120);
   if (rows.length === 0) {
     const p = document.createElement("p");
     p.className = "hint tiny";

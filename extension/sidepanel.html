@@ -49,7 +49,10 @@
 
       <section class="panel section-card">
         <h2 class="section-title">Victory &amp; awards</h2>
-        <p class="hint tiny">Visible victory points plus Longest Road / Largest Army.</p>
+        <p class="hint tiny">
+          Wire VP plus feed bonuses when needed. LR/LA columns show wire length/army size; feed may add
+          <span class="muted">(+2 VP)</span>. Totals avoid double-counting when the wire already includes those bonuses.
+        </p>
         <div id="vp-wrap" class="table-wrap table-elevated"></div>
       </section>
 
@@ -80,9 +83,30 @@
             Show player names
           </button>
         </div>
+        <div class="hands-intro" role="note" aria-label="How to read the Hands table">
+          <p class="hands-intro-lead">
+            This table is our <strong>best guess</strong> of how many resource cards each player has
+            (wood, brick, sheep, wheat, ore). We build it by reading the same game messages you see
+            in the activity feed, not by peeking inside hidden hands.
+          </p>
+          <p class="hands-intro-p">
+            <strong>Unknown</strong> means “some cards, but we don’t know which type.” That usually
+            happens when the game only shows a <strong>face-down</strong> card — for example,
+            someone steals from another player and the card type stays secret. A positive number is
+            a guess that someone gained that many mystery cards; a negative number is a guess that
+            someone lost that many.
+          </p>
+          <p class="hands-intro-p hands-intro-highlight">
+            Rows with a <strong>warm stripe</strong> on the left are ones where
+            <strong>Unknown is not zero</strong> (above zero <em>or</em> below zero). That is a
+            heads-up: something hidden happened, so the typed columns for that player may be less
+            certain until we learn more.
+          </p>
+        </div>
         <div id="wire-hands-wrap" class="table-wrap table-elevated"></div>
         <div class="hands-log-note hint tiny">
-          Resource changes happen here when relevant activity feed messages are parsed.
+          Below the table, the list shows recent feed lines and resource changes we applied from
+          them.
         </div>
         <div id="hands-log-wrap" class="hands-log-wrap"></div>
       </section>

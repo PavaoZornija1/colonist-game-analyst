@@ -337,6 +337,8 @@ export function initialTrackerState() {
     feedNameByHex: {},
     logEventCount: 0,
     logUpdatedAt: null,
+    /** Last time feed parsed a VP award (Longest Road / Largest Army / +VP). */
+    vpFeedUpdatedAt: null,
     /** Shallow-merged from diff.currentState (turn, timer, action, etc.). */
     currentState: {},
     /** Last server sequence on type-91 style envelopes, when present. */
@@ -488,8 +490,7 @@ function applyPlayerStatesPatch(state, playerStates) {
       if (keys.length === 0) {
         /* Empty {} in a diff — do not wipe previously merged VP. */
       } else {
-        const vpSum = sumVictoryPointsState(p.victoryPointsState);
-        if (vpSum != null) state.players[pid].victoryPointsPublic = vpSum;
+        mergeVictoryPointsStatePatch(state, pid, p.victoryPointsState);
       }
     }
   }
@@ -507,6 +508,84 @@ function sumVictoryPointsState(vps) {
     }
   }
   return any ? s : null;
+}
+
+/** Raw sum of feed VP fields (for UI row visibility). */
+export function feedVpAwardsRawTotal(pl) {
+  if (!pl || typeof pl !== "object") return 0;
+  const lr = Number(pl.feedLongestRoadVp) || 0;
+  const la = Number(pl.feedLargestArmyVp) || 0;
+  const ex = Number(pl.feedExtraVp) || 0;
+  return lr + la + ex;
+}
+
+/**
+ * Feed LR/LA bonuses for the **VP total column** only. When the wire already folded
+ * achievement VP into `victoryPointsPublic` (public exceeds merged key sum, or a rich merged
+ * breakdown), skip adding the same +2 again from the activity feed.
+ */
+export function feedVpAwardsForDisplayColumn(pl) {
+  if (!pl || typeof pl !== "object") return 0;
+  const ex = Number(pl.feedExtraVp) || 0;
+  let lr = Number(pl.feedLongestRoadVp) || 0;
+  let la = Number(pl.feedLargestArmyVp) || 0;
+  const wireVp = Number(pl.victoryPointsPublic);
+  const merged = pl.victoryPointsState;
+  const mergedSum =
+    merged && typeof merged === "object"
+      ? sumVictoryPointsState(merged)
+      : null;
+  const keyCount =
+    merged && typeof merged === "object"
+      ? Object.keys(merged).filter((k) => {
+          const v = merged[k];
+          return typeof v === "number" && Number.isFinite(v);
+        }).length
+      : 0;
+
+  if (
+    lr > 0 &&
+    pl.hasLongestRoad === true &&
+    Number.isFinite(wireVp) &&
+    mergedSum != null
+  ) {
+    if (wireVp > mergedSum) lr = 0;
+    else if (wireVp === mergedSum && keyCount >= 3) lr = 0;
+  }
+
+  if (
+    la > 0 &&
+    pl.hasLargestArmy === true &&
+    Number.isFinite(wireVp) &&
+    mergedSum != null
+  ) {
+    if (wireVp > mergedSum) la = 0;
+    else if (wireVp === mergedSum && keyCount >= 3) la = 0;
+  }
+
+  return lr + la + ex;
+}
+
+/**
+ * Colonist often sends `victoryPointsState` as a **partial** diff (e.g. only one enum key).
+ * Summing the patch alone overwrote `victoryPointsPublic` and dropped city / other components.
+ */
+function mergeVictoryPointsStatePatch(state, pid, patch) {
+  if (!patch || typeof patch !== "object") return;
+  const keys = Object.keys(patch);
+  if (keys.length === 0) return;
+  const pl = state.players[pid];
+  if (!pl || typeof pl !== "object") return;
+  if (!pl.victoryPointsState || typeof pl.victoryPointsState !== "object") {
+    pl.victoryPointsState = {};
+  }
+  const merged = pl.victoryPointsState;
+  for (const k of keys) {
+    const v = patch[k];
+    if (typeof v === "number" && Number.isFinite(v)) merged[k] = v;
+  }
+  const vpSum = sumVictoryPointsState(merged);
+  if (vpSum != null) pl.victoryPointsPublic = vpSum;
 }
 
 const KNOWN_DIFF_TOP_KEYS = new Set([
@@ -620,10 +699,14 @@ function applyLongestRoadState(state, mechanicObj) {
   for (const colorKey of Object.keys(mechanicObj)) {
     const row = mechanicObj[colorKey];
     if (!row || typeof row !== "object") continue;
-    if (row.longestRoad == null) continue;
     const pid = String(colorKey);
     if (!state.players[pid]) state.players[pid] = { colorId: Number(colorKey) };
-    state.players[pid].longestRoad = row.longestRoad;
+    if (row.longestRoad != null) {
+      state.players[pid].longestRoad = row.longestRoad;
+    }
+    if (typeof row.hasLongestRoad === "boolean") {
+      state.players[pid].hasLongestRoad = row.hasLongestRoad;
+    }
   }
 }
 
@@ -632,11 +715,15 @@ function applyLargestArmyState(state, mechanicObj) {
   for (const colorKey of Object.keys(mechanicObj)) {
     const row = mechanicObj[colorKey];
     if (!row || typeof row !== "object") continue;
-    const v = row.largestArmy ?? row.knightsPlayed ?? row.armySize;
-    if (v == null) continue;
     const pid = String(colorKey);
     if (!state.players[pid]) state.players[pid] = { colorId: Number(colorKey) };
-    state.players[pid].largestArmy = v;
+    const v = row.largestArmy ?? row.knightsPlayed ?? row.armySize;
+    if (v != null) {
+      state.players[pid].largestArmy = v;
+    }
+    if (typeof row.hasLargestArmy === "boolean") {
+      state.players[pid].hasLargestArmy = row.hasLargestArmy;
+    }
   }
 }
 
@@ -998,21 +1085,15 @@ export function reconcileUnknownFromTypedDeficits(row) {
 }
 
 /**
- * Apply one feed-derived hand delta (keyed by Colonist name-color hex).
+ * Resolve chat-color hex for a feed actor (“PavaoZ …”, targetYou, etc.).
+ * Shared by hand deltas and VP / award lines.
  * @param {ReturnType<typeof initialTrackerState>} state
- * @param {{ colorHex?: string, targetYou?: boolean, cards: Record<string, number> }} detail
+ * @param {{ colorHex?: string, targetYou?: boolean, player?: string }} detail
  */
-export function applyGameLogDelta(state, detail) {
-  if (!detail || typeof detail !== "object" || typeof detail.cards !== "object")
-    return state;
-
+export function resolveGameLogActorHex(state, detail) {
+  if (!detail || typeof detail !== "object") return "";
   let hex = "";
   if (detail.targetYou === true) {
-    /**
-     * Prefer optional `detail.colorHex` only when it is the local seat’s chat color.
-     * Lines like “You stole … from Raney” often color only the victim; game-log omits
-     * `colorHex` on those rows so this falls through to `logLocalPlayerColorHex`.
-     */
     hex =
       normalizeColonistChatHex(detail.colorHex) ||
       normalizeColonistChatHex(state.logLocalPlayerColorHex);
@@ -1050,7 +1131,14 @@ export function applyGameLogDelta(state, detail) {
       typeof state.logLocalPlayerDisplayName === "string" &&
       state.logLocalPlayerDisplayName.trim()
     ) {
-      hex = feedHexFromTrackedPlayerName(state, state.logLocalPlayerDisplayName.trim());
+      hex = feedHexFromTrackedPlayerName(
+        state,
+        state.logLocalPlayerDisplayName.trim(),
+      );
+    }
+    if (!hex && state.localWireColorId != null) {
+      const resolved = resolveFeedHexForColorId(state, state.localWireColorId);
+      if (resolved) hex = resolved;
     }
   } else {
     hex = normalizeColonistChatHex(detail.colorHex);
@@ -1063,6 +1151,77 @@ export function applyGameLogDelta(state, detail) {
   ) {
     hex = feedHexFromTrackedPlayerName(state, detail.player.trim());
   }
+  return hex || "";
+}
+
+/** Wire `players` pid (`"1"`..`"4"`) for a Colonist chat hex; creates mapping via colorId. */
+export function playerWirePidForChatHex(state, hex) {
+  const hx = normalizeColonistChatHex(hex);
+  if (!hx) return null;
+  const targetCid = colorIdFromColonistChatHex(hx);
+  if (targetCid == null) return null;
+  const players =
+    state.players && typeof state.players === "object" ? state.players : {};
+  for (const pid of Object.keys(players)) {
+    const pl = players[pid];
+    if (!pl || typeof pl !== "object") continue;
+    const cid = Number(pl.colorId ?? pid);
+    if (cid === targetCid) return String(pid);
+  }
+  return String(targetCid);
+}
+
+/**
+ * Apply Longest Road / Largest Army / extra VP parsed from the activity feed.
+ * Merges into `players[pid].feedLongestRoadVp`, `feedLargestArmyVp`, `feedExtraVp`
+ * and surfaces in Victory & awards via renderVP.
+ * @param {ReturnType<typeof initialTrackerState>} state
+ * @param {{
+ *   colorHex?: string,
+ *   targetYou?: boolean,
+ *   player?: string,
+ *   longestRoadVp?: number|null,
+ *   largestArmyVp?: number|null,
+ *   extraVp?: number|null,
+ * }} detail
+ */
+export function applyFeedAwardDelta(state, detail) {
+  if (!detail || typeof detail !== "object") return state;
+  const hex = resolveGameLogActorHex(state, detail);
+  if (!hex) return state;
+  let pid = playerWirePidForChatHex(state, hex);
+  if (!pid) return state;
+  if (!state.players[pid] || typeof state.players[pid] !== "object") {
+    state.players[pid] = { colorId: Number(pid) };
+  }
+  const pl = state.players[pid];
+  if (detail.longestRoadVp !== undefined && detail.longestRoadVp !== null) {
+    const n = Number(detail.longestRoadVp);
+    pl.feedLongestRoadVp = Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+  if (detail.largestArmyVp !== undefined && detail.largestArmyVp !== null) {
+    const n = Number(detail.largestArmyVp);
+    pl.feedLargestArmyVp = Number.isFinite(n) && n >= 0 ? n : 0;
+  }
+  if (detail.extraVp != null && detail.extraVp !== undefined) {
+    const add = Number(detail.extraVp);
+    if (Number.isFinite(add) && add !== 0)
+      pl.feedExtraVp = (Number(pl.feedExtraVp) || 0) + add;
+  }
+  state.vpFeedUpdatedAt = Date.now();
+  return state;
+}
+
+/**
+ * Apply one feed-derived hand delta (keyed by Colonist name-color hex).
+ * @param {ReturnType<typeof initialTrackerState>} state
+ * @param {{ colorHex?: string, targetYou?: boolean, cards: Record<string, number> }} detail
+ */
+export function applyGameLogDelta(state, detail) {
+  if (!detail || typeof detail !== "object" || typeof detail.cards !== "object")
+    return state;
+
+  const hex = resolveGameLogActorHex(state, detail);
   if (!hex) return state;
 
   if (!state.logHandByColorHex || typeof state.logHandByColorHex !== "object") {
@@ -1183,8 +1342,10 @@ export function buildHeuristics(state) {
   const standard = ["lumber", "brick", "wool", "grain", "ore"];
   let scarcest = Infinity;
   const scarcestNames = [];
+  let maxBank = 0;
   for (const n of standard) {
     const v = Number(bank[n]) || 0;
+    if (v > maxBank) maxBank = v;
     if (v <= 1) {
       tips.push(`Bank low on ${n} (${v} in supply).`);
     }
@@ -1196,7 +1357,16 @@ export function buildHeuristics(state) {
       scarcestNames.push(n);
     }
   }
-  if (scarcest < Infinity && scarcest >= 2 && scarcestNames.length > 0) {
+  /**
+   * Only call out “scarcest” when supply is imbalanced (min < max).
+   * When every stack is equal (e.g. all 10), the old tip was noise.
+   */
+  if (
+    scarcest < Infinity &&
+    maxBank > 0 &&
+    scarcest < maxBank &&
+    scarcestNames.length > 0
+  ) {
     tips.push(
       `Scarcest in bank right now: ${scarcestNames.join(", ")} (${scarcest}).`,
     );
