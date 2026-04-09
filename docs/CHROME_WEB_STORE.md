@@ -25,7 +25,16 @@ Use this doc when submitting the extension in the [Chrome Web Store Developer Da
    - At least **1** image; **5** is better.  
    - Optional: **440×280** small promo tile, **920×680** or **1400×560** marquee (if you want marquee placement).
 
-4. **Iconset** — `extension/icons/` holds **128×128**, **48×48**, and **16×16** PNGs referenced from `manifest.json`. Regenerate from new art with square source, then: `sips -z 128 128 …`, `sips -z 48 48 …`, `sips -z 16 16 …`.
+4. **Iconset** — Master source is **`extension/icons/icon.png`** (square; e.g. **1024×1024**). Regenerate shipped sizes on macOS:
+
+   ```bash
+   cd extension/icons
+   sips -z 128 128 icon.png --out icon-128.png
+   sips -z 48 48 icon.png --out icon-48.png
+   sips -z 16 16 icon.png --out icon-16.png
+   ```
+
+   If `icon.png` is not square, center-crop to a square first (see `sips --cropToHeightWidth` / `--cropOffset` in `man sips`).
 
 ---
 

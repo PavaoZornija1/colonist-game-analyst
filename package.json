@@ -1,10 +1,11 @@
 {
   "name": "colonist-game-analyst",
-  "version": "0.5.37",
+  "version": "0.5.38",
   "private": true,
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "pack-extension": "cd extension && zip -r ../colonist-game-analyst-extension.zip . -x '*.DS_Store'"
+    "pack-extension": "cd extension && zip -r ../colonist-game-analyst-extension.zip . -x '*.DS_Store'",
+    "regenerate-icons": "cd extension/icons && sips -z 128 128 icon.png --out icon-128.png && sips -z 48 48 icon.png --out icon-48.png && sips -z 16 16 icon.png --out icon-16.png"
   }
 }
