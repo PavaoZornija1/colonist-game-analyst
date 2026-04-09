@@ -17,7 +17,7 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Pack extension folder
-        run: cd extension && zip -r ../colonist-game-analyst-extension.zip . -x "*.DS_Store" -x "icons/image.png" -x "icons/icon.png"
+        run: cd extension && zip -r ../colonist-game-analyst-extension.zip . -x "*.DS_Store" -x "icons/icon.png"
 
       - name: Create release and upload zip
         uses: softprops/action-gh-release@v2

@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "test": "node --test",
-    "pack-extension": "cd extension && zip -r ../colonist-game-analyst-extension.zip . -x '*.DS_Store' -x 'icons/image.png' -x 'icons/icon.png'",
-    "regenerate-icons": "cd extension/icons && sips -z 128 128 image.png --out icon-128.png && sips -z 48 48 image.png --out icon-48.png && sips -z 16 16 image.png --out icon-16.png"
+    "pack-extension": "cd extension && zip -r ../colonist-game-analyst-extension.zip . -x '*.DS_Store' -x 'icons/icon.png' -x 'icons/icon.png'",
+    "regenerate-icons": "cd extension/icons && sips -z 128 128 icon.png --out icon-128.png && sips -z 48 48 icon.png --out icon-48.png && sips -z 16 16 icon.png --out icon-16.png"
   }
 }

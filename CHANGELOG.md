@@ -6,8 +6,8 @@ All notable changes to **Colonist Game Analyst** are tracked here. The **shippin
 
 ### Changed
 
-- **Icons:** regenerate **`icon-16/48/128.png`** from **`extension/icons/image.png`** (1024² master).
-- **`pack-extension` / release workflow:** exclude large source files **`icons/image.png`** and **`icons/icon.png`** from the zip (shipped icons only).
+- **Icons:** regenerate **`icon-16/48/128.png`** from **`extension/icons/icon.png`** (1024² master).
+- **`pack-extension` / release workflow:** exclude large source files **`icons/icon.png`** and **`icons/icon.png`** from the zip (shipped icons only).
 
 ## [0.5.38] - 2026-04-09
 
