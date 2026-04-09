@@ -195,7 +195,12 @@ chrome.runtime.onMessage.addListener((msg) => {
           Math.abs(Number(cards.grain) || 0) +
           Math.abs(Number(cards.ore) || 0) +
           Math.abs(Number(cards.unknown) || 0);
-        if (sum > 0 && (p.detail.colorHex || p.detail.targetYou)) {
+        const hasPlayer =
+          typeof p.detail.player === "string" && p.detail.player.trim().length > 0;
+        if (
+          sum > 0 &&
+          (p.detail.colorHex || p.detail.targetYou || hasPlayer)
+        ) {
           applyGameLogDelta(tracker, {
             colorHex: p.detail.colorHex,
             targetYou: p.detail.targetYou === true,

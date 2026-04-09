@@ -48,6 +48,43 @@ test("applyGameLogDelta coerces numeric strings and targetYou uses feedHexByColo
   assert.equal(row.grain, 2);
 });
 
+test("applyGameLogDelta targetYou uses display name → feedNameByHex when chat hex missing", () => {
+  const state = initialTrackerState();
+  state.logLocalPlayerDisplayName = "PavaoZ";
+  state.feedNameByHex["#e27174"] = "PavaoZ";
+  applyGameLogDelta(state, { targetYou: true, cards: { grain: 1 } });
+  assert.equal(state.logHandByColorHex["#e27174"].grain, 1);
+});
+
+test("applyGameLogDelta targetYou infers hex from sole visible wire hand", () => {
+  const state = initialTrackerState();
+  state.players["1"] = {
+    colorId: 1,
+    wireHandAllZeros: false,
+    wireResources: { lumber: 1, brick: 0, wool: 0, grain: 0, ore: 0 },
+  };
+  applyGameLogDelta(state, { targetYou: true, cards: { grain: 1 } });
+  assert.equal(state.logHandByColorHex["#e27174"].grain, 1);
+});
+
+test("applyGameLogDelta targetYou infers hex with 0-based player keys", () => {
+  const state = initialTrackerState();
+  state.players["0"] = {
+    colorId: 0,
+    wireHandAllZeros: false,
+    wireResources: { lumber: 1, brick: 0, wool: 0, grain: 0, ore: 0 },
+  };
+  applyGameLogDelta(state, { targetYou: true, cards: { grain: 1 } });
+  assert.equal(state.logHandByColorHex["#e27174"].grain, 1);
+});
+
+test("applyGameLogDelta resolves victim row by player when colorHex missing", () => {
+  const state = initialTrackerState();
+  state.feedNameByHex["#223697"] = "Jerome";
+  applyGameLogDelta(state, { player: "Jerome", cards: { grain: -1 } });
+  assert.equal(state.logHandByColorHex["#223697"].grain, -1);
+});
+
 test("reconcileUnknownFromTypedDeficits resolves one hidden card (city + steal pattern)", () => {
   const row = {
     lumber: 0,
@@ -156,12 +193,30 @@ test("resolveFeedHexForColorId uses runtime mapping when available", () => {
   assert.equal(resolveFeedHexForColorId(state, 1), "#e27174");
 });
 
-test("resolveFeedHexForColorId swaps local seat dynamically per match", () => {
+test("resolveFeedHexForColorId no swap when wire seat matches chat palette", () => {
   const state = initialTrackerState();
   state.localWireColorId = 1;
   state.logLocalPlayerColorHex = "#e27174";
   assert.equal(resolveFeedHexForColorId(state, 1), "#e27174");
   assert.equal(resolveFeedHexForColorId(state, 2), "#223697");
+});
+
+test("resolveFeedHexForColorId swaps when local wire seat ≠ chat palette slot", () => {
+  const state = initialTrackerState();
+  state.localWireColorId = 2;
+  state.logLocalPlayerColorHex = "#e27174";
+  assert.equal(resolveFeedHexForColorId(state, 2), "#e27174");
+  assert.equal(resolveFeedHexForColorId(state, 1), "#223697");
+});
+
+test("resolveFeedHexForColorId handles 0-based playerStates keys", () => {
+  const state = initialTrackerState();
+  state.players["0"] = { colorId: 0 };
+  state.players["1"] = { colorId: 1 };
+  state.localWireColorId = 0;
+  state.logLocalPlayerColorHex = "#e27174";
+  assert.equal(resolveFeedHexForColorId(state, 0), "#e27174");
+  assert.equal(resolveFeedHexForColorId(state, 1), "#223697");
 });
 
 test("feedHandRowForColorId uses resolved mapping", () => {

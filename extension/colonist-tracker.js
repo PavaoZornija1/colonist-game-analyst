@@ -178,6 +178,35 @@ export function colorIdFromColonistChatHex(hex) {
   return null;
 }
 
+function playersWireIdsLookZeroBased(state) {
+  const players =
+    state?.players && typeof state.players === "object" ? state.players : {};
+  for (const k of Object.keys(players)) {
+    if (Number(k) === 0) return true;
+  }
+  return false;
+}
+
+/**
+ * Map `playerStates` seat keys / `playerColor` to chat palette keys 1–4 (base four colors).
+ * Colonist sometimes keys four players `1–4`, sometimes `0–3`; chat hexes always match 1–4.
+ * @param {ReturnType<typeof initialTrackerState>} state
+ * @param {unknown} wireSeatId
+ * @returns {number|null}
+ */
+export function wireSeatToPaletteKey(state, wireSeatId) {
+  const n = Number(wireSeatId);
+  if (!Number.isFinite(n)) return null;
+  if (playersWireIdsLookZeroBased(state)) {
+    if (n >= 0 && n <= 3) return n + 1;
+    return null;
+  }
+  if (Object.prototype.hasOwnProperty.call(COLONIST_CHAT_HEX_BY_COLOR_ID, n))
+    return n;
+  if (n >= 0 && n <= 3) return n + 1;
+  return null;
+}
+
 /** Best-effort local seat id from wire visibility (only your seat has typed cards). */
 export function inferLikelyLocalWireColorId(state) {
   const players =
@@ -238,23 +267,30 @@ export function resolveFeedHexForColorId(state, colorId) {
       : {};
   const runtimeHex = normalizeColonistChatHex(runtime[String(cid)]);
   if (runtimeHex) return runtimeHex;
-  const defaultHex = normalizeColonistChatHex(
-    COLONIST_CHAT_HEX_BY_COLOR_ID[cid],
-  );
+
+  const cidPal = wireSeatToPaletteKey(state, cid);
+  const defaultHex =
+    cidPal != null
+      ? normalizeColonistChatHex(COLONIST_CHAT_HEX_BY_COLOR_ID[cidPal])
+      : "";
 
   const localHex = normalizeColonistChatHex(state?.logLocalPlayerColorHex);
   const localWireCid = toFiniteNumber(state?.localWireColorId);
   if (!localHex || localWireCid == null) return defaultHex;
 
   const defaultLocalCid = colorIdFromColonistChatHex(localHex);
-  if (defaultLocalCid == null || defaultLocalCid === localWireCid)
-    return defaultHex;
+  if (defaultLocalCid == null) return defaultHex;
 
-  // Per-match remap: only swap the local seat id with the default color-id of local feed color.
-  if (cid === localWireCid) return localHex;
-  if (cid === defaultLocalCid) {
+  const localPal = wireSeatToPaletteKey(state, localWireCid);
+  if (localPal == null) return defaultHex;
+
+  /** Local player’s wire seat matches their chat color’s default slot — no remap. */
+  if (localPal === defaultLocalCid) return defaultHex;
+
+  if (cidPal != null && cidPal === localPal) return localHex;
+  if (cidPal != null && cidPal === defaultLocalCid) {
     return normalizeColonistChatHex(
-      COLONIST_CHAT_HEX_BY_COLOR_ID[localWireCid],
+      COLONIST_CHAT_HEX_BY_COLOR_ID[localPal],
     );
   }
   return defaultHex;
@@ -903,6 +939,34 @@ function emptyFeedHandRow() {
   return { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0, unknown: 0 };
 }
 
+/** Match feed naming conventions used in `game-log.js` player tags. */
+function normalizeFeedPlayerToken(name) {
+  return String(name || "")
+    .replace(/\s+/g, " ")
+    .trim()
+    .replace(/[:.,;!?]+$/g, "")
+    .trim()
+    .toLowerCase();
+}
+
+/**
+ * Resolve chat-color hex from `feedNameByHex` (built from prior “X got …” rows).
+ */
+function feedHexFromTrackedPlayerName(state, rawName) {
+  const want = normalizeFeedPlayerToken(rawName);
+  if (!want || want === "you") return "";
+  const map = state.feedNameByHex;
+  if (!map || typeof map !== "object") return "";
+  for (const [hxKey, nm] of Object.entries(map)) {
+    if (!nm || typeof nm !== "string") continue;
+    const n = normalizeFeedPlayerToken(nm);
+    if (n === want) return normalizeColonistChatHex(hxKey);
+    const head = normalizeFeedPlayerToken((nm.split(/\s+/)[0] || "").trim());
+    if (head && head === want) return normalizeColonistChatHex(hxKey);
+  }
+  return "";
+}
+
 const FEED_HAND_TYPED_KEYS = ["lumber", "brick", "wool", "grain", "ore"];
 
 /**
@@ -944,7 +1008,11 @@ export function applyGameLogDelta(state, detail) {
 
   let hex = "";
   if (detail.targetYou === true) {
-    /** Prefer event-scoped hex (e.g. “You stole” span color) over cached local. */
+    /**
+     * Prefer optional `detail.colorHex` only when it is the local seat’s chat color.
+     * Lines like “You stole … from Raney” often color only the victim; game-log omits
+     * `colorHex` on those rows so this falls through to `logLocalPlayerColorHex`.
+     */
     hex =
       normalizeColonistChatHex(detail.colorHex) ||
       normalizeColonistChatHex(state.logLocalPlayerColorHex);
@@ -959,12 +1027,41 @@ export function applyGameLogDelta(state, detail) {
       );
     }
     if (!hex && state.localWireColorId != null) {
-      const cid = Number(state.localWireColorId);
-      const defHex = COLONIST_CHAT_HEX_BY_COLOR_ID[cid];
-      hex = normalizeColonistChatHex(defHex);
+      const lpk = wireSeatToPaletteKey(state, state.localWireColorId);
+      if (lpk != null)
+        hex = normalizeColonistChatHex(COLONIST_CHAT_HEX_BY_COLOR_ID[lpk]);
+    }
+    if (!hex) {
+      const guessed =
+        inferDefiniteLocalWireColorId(state) ?? inferLikelyLocalWireColorId(state);
+      if (guessed != null && Number.isFinite(Number(guessed))) {
+        const cidStr = String(guessed);
+        const gPal = wireSeatToPaletteKey(state, guessed);
+        hex =
+          (state.feedHexByColorId &&
+            normalizeColonistChatHex(state.feedHexByColorId[cidStr])) ||
+          (gPal != null
+            ? normalizeColonistChatHex(COLONIST_CHAT_HEX_BY_COLOR_ID[gPal])
+            : "");
+      }
+    }
+    if (
+      !hex &&
+      typeof state.logLocalPlayerDisplayName === "string" &&
+      state.logLocalPlayerDisplayName.trim()
+    ) {
+      hex = feedHexFromTrackedPlayerName(state, state.logLocalPlayerDisplayName.trim());
     }
   } else {
     hex = normalizeColonistChatHex(detail.colorHex);
+  }
+  if (
+    !hex &&
+    typeof detail.player === "string" &&
+    detail.player.trim() &&
+    detail.targetYou !== true
+  ) {
+    hex = feedHexFromTrackedPlayerName(state, detail.player.trim());
   }
   if (!hex) return state;
 
@@ -1004,8 +1101,9 @@ export function feedHandRowForColorId(state, colorId) {
       : {};
   const preferred = resolveFeedHexForColorId(state, cid);
   if (preferred && byHex[preferred]) return { ...byHex[preferred] };
+  const cidPal = wireSeatToPaletteKey(state, cid);
   for (const h of Object.keys(byHex)) {
-    if (colorIdFromColonistChatHex(h) === cid) {
+    if (cidPal != null && colorIdFromColonistChatHex(h) === cidPal) {
       return { ...byHex[h] };
     }
   }

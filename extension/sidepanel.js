@@ -96,6 +96,7 @@ function renderUnifiedHands(state) {
           ? escapeHtml(colorLabelForSeat(state, cid))
           : escapeHtml(`Feed ${hex}`);
       const tr = document.createElement("tr");
+      if (Number(r.unknown) !== 0) tr.classList.add("hands-row--uncertain");
       tr.innerHTML = `<td>${label}</td><td class="col-num">${r.lumber ?? 0}</td><td class="col-num">${r.brick ?? 0}</td><td class="col-num">${r.wool ?? 0}</td><td class="col-num">${r.grain ?? 0}</td><td class="col-num">${r.ore ?? 0}</td><td class="col-num">${r.unknown ?? 0}</td>`;
       wtb.appendChild(tr);
     }
@@ -118,6 +119,7 @@ function renderUnifiedHands(state) {
     const head = handsLabelMode === "names" && seenName ? seenName : colorLabelForSeat(state, colorId);
     const label = `${escapeHtml(head)} <span class="muted">(#${escapeHtml(id)})</span>`;
     const tr = document.createElement("tr");
+    if (Number(r.unknown) !== 0) tr.classList.add("hands-row--uncertain");
     tr.innerHTML = `<td>${label}</td><td class="col-num">${r.lumber ?? 0}</td><td class="col-num">${r.brick ?? 0}</td><td class="col-num">${r.wool ?? 0}</td><td class="col-num">${r.grain ?? 0}</td><td class="col-num">${r.ore ?? 0}</td><td class="col-num">${r.unknown ?? 0}</td>`;
     wtb.appendChild(tr);
   }

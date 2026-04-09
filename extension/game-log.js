@@ -501,7 +501,9 @@
     const cards = detail.cards;
     if (!cards || typeof cards !== "object") return;
     if (deltaSum(cards) === 0) return;
-    if (!detail.colorHex && !detail.targetYou) return;
+    const hasPlayer =
+      typeof detail.player === "string" && detail.player.trim().length > 0;
+    if (!detail.colorHex && !detail.targetYou && !hasPlayer) return;
     const payload = {
       source: MESSAGE_SOURCE,
       t: Date.now(),
@@ -1157,14 +1159,17 @@
     let stealerDest;
     const lead = lower.trimStart();
     if (lead.startsWith("you stole ") || /^you\s+stole\b/.test(lead)) {
-      const actor = extractLeadActor(part);
-      const hx = normalizeColonistChatHex(actor.hex);
-      stealerDest = hx ? { targetYou: true, colorHex: hx } : { targetYou: true };
+      /**
+       * Do not pass `extractLeadActor().hex` here: Colonist renders “You” as plain text and
+       * only the *victim* is in a colored span, so the first bold/colored span is Raney’s
+       * hex. `applyGameLogDelta` prefers `detail.colorHex`, which would credit +stolen cards
+       * to the victim row.
+       */
+      stealerDest = { targetYou: true };
     } else {
       const stealer = extractLeadActor(part);
       if (normalizePlayerNameToken(stealer.name) === "you") {
-        const hx = normalizeColonistChatHex(stealer.hex);
-        stealerDest = hx ? { targetYou: true, colorHex: hx } : { targetYou: true };
+        stealerDest = { targetYou: true };
       } else {
         stealerDest = actorDestination(el, stealer);
         if (!stealerDest) return;
@@ -1205,6 +1210,8 @@
             cards: { [k]: -n },
             message: logMsg,
           });
+        } else if (victimTag.player) {
+          sendHand({ ...victimTag, cards: { [k]: -n }, message: logMsg });
         }
       }
     } else if (hidden > 0) {
@@ -1218,6 +1225,8 @@
           cards: { unknown: -hidden },
           message: logMsg,
         });
+      } else if (victimTag.player) {
+        sendHand({ ...victimTag, cards: { unknown: -hidden }, message: logMsg });
       }
     }
   }
