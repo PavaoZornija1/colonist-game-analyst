@@ -4,9 +4,9 @@
   "version": "0.5.37",
   "description": "Read-only analyst for colonist.io — WS (JSON/MessagePack), game log deltas, bank, dev cards, pieces.",
   "icons": {
-    "16": "icons/icon-16.png",
-    "48": "icons/icon-48.png",
-    "128": "icons/icon-128.png"
+    "16": "icons/icon.png",
+    "48": "icons/icon.png",
+    "128": "icons/icon.png"
   },
   "permissions": ["scripting", "sidePanel", "storage", "tabs"],
   "host_permissions": [
