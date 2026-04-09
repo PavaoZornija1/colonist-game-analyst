@@ -1,0 +1,155 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Colonist Analyst</title>
+    <link rel="stylesheet" href="sidepanel.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1 class="title">Colonist Analyst</h1>
+      <p class="subtitle">Bank, hands, pieces, and socket traffic — while you play</p>
+    </header>
+
+    <div id="onboard-banner" class="onboard-banner" hidden>
+      <p>
+        <strong>Quick start:</strong> keep a <strong>colonist.io</strong> game tab open, then use this side
+        panel. Data fills from the live tab; click <strong>Clear all</strong> to reset the session buffer.
+      </p>
+      <button type="button" id="onboard-dismiss" class="btn btn-small">Got it</button>
+    </div>
+
+    <main class="dashboard">
+      <section class="panel section-card">
+        <h2 class="section-title">Game snapshot</h2>
+        <p class="hint tiny glance-hint">
+          Turn, timer, and sequence from state diffs. Numbers are raw wire enums unless noted.
+        </p>
+        <div id="game-glance-grid" class="glance-grid"></div>
+      </section>
+
+      <section class="panel section-card">
+        <h2 class="section-title">Dice <span class="section-badge">history</span></h2>
+        <p class="hint tiny">
+          Rolls use merged <code>diceState</code> plus <code>gameLogState</code> lines with
+          <code>type: 10</code> when the server splits dice across fields.
+        </p>
+        <div id="dice-history-wrap" class="dice-history-wrap"></div>
+      </section>
+
+      <section class="panel section-card">
+        <h2 class="section-title">Trades &amp; production <span class="section-badge">wire</span></h2>
+        <p class="hint tiny">
+          <code>tradeState</code> mirrors player trade offers; type <strong>28</strong> payloads list who
+          received which resource card on a roll (<code>distributionType</code> explained below).
+        </p>
+        <div id="trade-wire-wrap" class="trade-wire-wrap"></div>
+      </section>
+
+      <section class="panel section-card">
+        <h2 class="section-title">Victory &amp; awards</h2>
+        <p class="hint tiny">
+          Public VP is the <strong>sum</strong> of numeric entries in <code>victoryPointsState</code> when
+          the wire sends multiple components.
+        </p>
+        <div id="vp-wrap" class="table-wrap table-elevated"></div>
+      </section>
+
+      <section class="panel section-card">
+        <h2 class="section-title">Quick insights</h2>
+        <p class="hint tiny">
+          Simple bank / hand heuristics — not move advice. Robber discard tips: default when over
+          <strong>7</strong> (8+ cards); when we infer a <strong>2-player</strong> Colonist table, when at
+          <strong>≥10</strong> cards.
+        </p>
+        <ul id="heuristics-list" class="insights-list"></ul>
+      </section>
+
+      <section id="unknown-keys-section" class="panel section-card" hidden>
+        <h2 class="section-title">Wire debug</h2>
+        <p class="hint tiny">
+          Top-level <code>diff</code> keys we do not parse yet (for Colonist protocol updates).
+        </p>
+        <div id="unknown-keys-wrap" class="unknown-keys-wrap"></div>
+      </section>
+
+      <section class="panel tracker-panel section-card">
+        <div class="panel-head">
+          <h2 class="section-title">Resource bank</h2>
+          <p id="tracker-meta" class="tracker-meta"></p>
+        </div>
+        <div id="bank-grid" class="bank-grid"></div>
+      </section>
+
+      <section class="panel tracker-panel section-card">
+        <h2 class="section-title">Hands</h2>
+        <div id="wire-hands-wrap" class="table-wrap table-elevated"></div>
+      </section>
+
+      <section class="panel tracker-panel section-card">
+        <h2 class="section-title">Development cards</h2>
+        <details class="hint-details">
+          <summary>What this shows</summary>
+          <p class="hint tiny">
+            Deck remaining from <code>bankDevelopmentCards.cards</code> (stack length on the wire).
+            Played types from <code>developmentCardsUsed</code>. Base Catan uses 25 development cards;
+            scenarios vary.
+          </p>
+        </details>
+        <div id="dev-cards" class="dev-cards-panel"></div>
+      </section>
+
+      <section class="panel tracker-panel section-card">
+        <h2 class="section-title">Pieces</h2>
+        <details class="hint-details">
+          <summary>What this shows</summary>
+          <p class="hint tiny">
+            Supply remaining from mechanic state (base limits 15 / 5 / 4 for roads · settlements ·
+            cities; expansions may differ).
+          </p>
+        </details>
+        <div id="pieces-wrap" class="table-wrap table-elevated"></div>
+      </section>
+
+      <section class="panel section-card section-card--log">
+        <section class="toolbar toolbar--nested" aria-label="Log controls">
+          <div class="toolbar-main">
+            <label class="toggle">
+              <input type="checkbox" id="pause" />
+              <span class="toggle-label">Pause log</span>
+            </label>
+            <button type="button" id="clear" class="btn btn-primary">Clear all</button>
+          </div>
+          <span id="status" class="status-pill" role="status">Waiting for events…</span>
+        </section>
+        <div class="panel-head panel-head--log">
+          <h2 class="section-title">Recent socket events</h2>
+        </div>
+        <div class="log-toolbar">
+          <input
+            type="search"
+            id="log-search"
+            class="log-search"
+            placeholder="Filter by text…"
+            autocomplete="off"
+            spellcheck="false"
+            aria-label="Filter socket log"
+          />
+          <label class="toggle toggle-inline">
+            <input type="checkbox" id="hide-heartbeats" checked />
+            <span class="toggle-label">Hide keep-alive (id 136 · 36-byte sends)</span>
+          </label>
+          <label class="toggle toggle-inline">
+            <input type="checkbox" id="hide-binary-ws" checked />
+            <span class="toggle-label">Hide binary / opaque WS frames</span>
+          </label>
+          <button type="button" id="export-json" class="btn">Export JSON</button>
+        </div>
+        <ul id="log" class="log" aria-live="polite"></ul>
+      </section>
+    </main>
+
+    <script src="sidepanel.js" type="module"></script>
+  </body>
+</html>

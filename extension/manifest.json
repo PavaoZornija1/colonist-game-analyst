@@ -1,0 +1,70 @@
+{
+  "manifest_version": 3,
+  "name": "Colonist Game Analyst",
+  "version": "0.5.5",
+  "description": "Read-only analyst for colonist.io — WS (JSON/MessagePack), game log deltas, bank, dev cards, pieces.",
+  "permissions": ["scripting", "sidePanel", "storage"],
+  "host_permissions": [
+    "https://colonist.io/*",
+    "https://*.colonist.io/*",
+    "https://hexs.io/*",
+    "https://*.hexs.io/*"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://colonist.io/*",
+        "https://*.colonist.io/*",
+        "https://hexs.io/*",
+        "https://*.hexs.io/*"
+      ],
+      "js": ["content.js"],
+      "run_at": "document_start",
+      "all_frames": true
+    },
+    {
+      "matches": [
+        "https://colonist.io/*",
+        "https://*.colonist.io/*",
+        "https://hexs.io/*",
+        "https://*.hexs.io/*"
+      ],
+      "js": ["msgpack.min.js", "injected.js"],
+      "run_at": "document_start",
+      "all_frames": true,
+      "world": "MAIN"
+    },
+    {
+      "matches": [
+        "https://colonist.io/*",
+        "https://*.colonist.io/*",
+        "https://hexs.io/*",
+        "https://*.hexs.io/*"
+      ],
+      "js": ["game-log.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "side_panel": {
+    "default_path": "sidepanel.html"
+  },
+  "action": {
+    "default_title": "Open Colonist Analyst"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["injected.js", "msgpack.min.js"],
+      "matches": [
+        "https://colonist.io/*",
+        "https://*.colonist.io/*",
+        "https://hexs.io/*",
+        "https://*.hexs.io/*"
+      ]
+    }
+  ]
+}
