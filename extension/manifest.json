@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Colonist Game Analyst",
-  "version": "0.5.38",
+  "version": "0.5.39",
   "description": "Read-only analyst for colonist.io — WS (JSON/MessagePack), game log deltas, bank, dev cards, pieces.",
   "icons": {
     "16": "icons/icon-16.png",

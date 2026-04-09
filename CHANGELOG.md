@@ -2,6 +2,13 @@
 
 All notable changes to **Colonist Game Analyst** are tracked here. The **shipping version** for the Chrome extension is the `version` field in [`extension/manifest.json`](extension/manifest.json). The repo `package.json` `version` is kept aligned for developer reference.
 
+## [0.5.39] - 2026-04-09
+
+### Changed
+
+- **Icons:** regenerate **`icon-16/48/128.png`** from **`extension/icons/image.png`** (1024² master).
+- **`pack-extension` / release workflow:** exclude large source files **`icons/image.png`** and **`icons/icon.png`** from the zip (shipped icons only).
+
 ## [0.5.38] - 2026-04-09
 
 ### Changed
