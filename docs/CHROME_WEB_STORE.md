@@ -2,6 +2,8 @@
 
 Use this doc when submitting the extension in the [Chrome Web Store Developer Dashboard](https://chrome.google.com/webstore/devconsole).
 
+**Regional eligibility:** Developer registration is only available in **countries Google supports** for this program. If your country is not in the signup form, you cannot publish on the store from that account until Google adds the region (or you arrange a **legitimate** publisher elsewhere). **Distribution without the store** — GitHub Releases + `npm run pack-extension` + users **Load unpacked** — is documented in the main [README](../README.md).
+
 ## Before you submit
 
 1. **Privacy policy URL (required)**  

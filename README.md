@@ -27,6 +27,16 @@ A Chrome extension that opens a **read-only side panel** for [colonist.io](https
 
 Open a Colonist (or Hexs) game tab, then click the extension icon to open the side panel.
 
+### Install from a release zip (no store)
+
+If you publish **GitHub Releases** (or any download link), others can:
+
+1. Download **`colonist-game-analyst-extension.zip`** (build it with `npm run pack-extension`, or attach the output to a release).
+2. Unzip to a folder whose root contains `manifest.json`.
+3. In Chrome: **chrome://extensions** → **Developer mode** → **Load unpacked** → select that folder.
+
+That is a normal way many extensions reach users when the **Chrome Web Store developer signup** is not available in their country.
+
 ## Usage tips
 
 - Keep the **game tab** focused enough that the feed and WebSocket stay active.
@@ -42,7 +52,13 @@ Open a Colonist (or Hexs) game tab, then click the extension icon to open the si
 
 Release checklist: bump **`extension/manifest.json`** and **`package.json`** together, then append a dated section to **`CHANGELOG.md`**.
 
-### Chrome Web Store
+### Chrome Web Store (only where Google supports developer registration)
+
+Google ties store signup to **supported countries / payment regions**. If yours is not listed (e.g. some users report this for **Bosnia and Herzegovina**), you **cannot** complete official publishing until Google expands eligibility—or you use a **separate legitimate publisher** in a supported region (legal/contract, not a fake address).
+
+**Until then:** treat **[GitHub (or similar) + zip + Load unpacked](#install-from-a-release-zip-no-store)** as your real distribution path; the extension is still fully usable.
+
+When your region **is** supported:
 
 1. Host **[`docs/privacy-policy.html`](docs/privacy-policy.html)** at a public **HTTPS** URL; fill in the contact line.
 2. Follow **[`docs/CHROME_WEB_STORE.md`](docs/CHROME_WEB_STORE.md)** for listing text, permission justifications, and screenshots.
