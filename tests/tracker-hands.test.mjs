@@ -8,6 +8,7 @@ import {
   resolveFeedHexForColorId,
   feedHandRowForColorId,
   inferDefiniteLocalWireColorId,
+  reconcileUnknownFromTypedDeficits,
 } from "../extension/colonist-tracker.js";
 
 test("normalizeColonistChatHex normalizes shorthand and casing", () => {
@@ -31,6 +32,121 @@ test("applyGameLogDelta stores and sums by feed hex", () => {
   assert.equal(row.grain, 3);
   assert.equal(row.brick, 1);
   assert.equal(state.feedNameByHex["#223697"], "Chari");
+});
+
+test("applyGameLogDelta coerces numeric strings and targetYou uses feedHexByColorId fallback", () => {
+  const state = initialTrackerState();
+  state.localWireColorId = 1;
+  state.feedHexByColorId["1"] = "#e27174";
+  applyGameLogDelta(state, {
+    targetYou: true,
+    player: "You",
+    cards: { wool: "1", grain: 2 },
+  });
+  const row = state.logHandByColorHex["#e27174"];
+  assert.equal(row.wool, 1);
+  assert.equal(row.grain, 2);
+});
+
+test("reconcileUnknownFromTypedDeficits resolves one hidden card (city + steal pattern)", () => {
+  const row = {
+    lumber: 0,
+    brick: 0,
+    wool: 0,
+    grain: 2,
+    ore: 2,
+    unknown: 1,
+  };
+  row.grain -= 2;
+  row.ore -= 3;
+  reconcileUnknownFromTypedDeficits(row);
+  assert.equal(row.grain, 0);
+  assert.equal(row.ore, 0);
+  assert.equal(row.unknown, 0);
+});
+
+test("reconcileUnknownFromTypedDeficits resolves settlement missing wool", () => {
+  const row = {
+    lumber: 1,
+    brick: 1,
+    wool: 0,
+    grain: 1,
+    ore: 0,
+    unknown: 1,
+  };
+  for (const k of ["lumber", "brick", "wool", "grain"])
+    row[k] -= 1;
+  reconcileUnknownFromTypedDeficits(row);
+  assert.equal(row.lumber, 0);
+  assert.equal(row.brick, 0);
+  assert.equal(row.wool, 0);
+  assert.equal(row.grain, 0);
+  assert.equal(row.unknown, 0);
+});
+
+test("reconcileUnknownFromTypedDeficits does not infer when typed spend is already covered", () => {
+  const row = {
+    lumber: 1,
+    brick: 1,
+    wool: 0,
+    grain: 0,
+    ore: 0,
+    unknown: 1,
+  };
+  row.lumber -= 1;
+  row.brick -= 1;
+  reconcileUnknownFromTypedDeficits(row);
+  assert.equal(row.lumber, 0);
+  assert.equal(row.brick, 0);
+  assert.equal(row.unknown, 1);
+});
+
+test("reconcileUnknownFromTypedDeficits skips when not enough unknown", () => {
+  const row = {
+    lumber: 0,
+    brick: 0,
+    wool: 0,
+    grain: 0,
+    ore: 0,
+    unknown: 1,
+  };
+  row.lumber -= 1;
+  row.brick -= 1;
+  reconcileUnknownFromTypedDeficits(row);
+  assert.equal(row.lumber, -1);
+  assert.equal(row.brick, -1);
+  assert.equal(row.unknown, 1);
+});
+
+test("applyGameLogDelta runs reconciliation after spend", () => {
+  const state = initialTrackerState();
+  applyGameLogDelta(state, {
+    colorHex: "#223697",
+    cards: { grain: 2, ore: 2, unknown: 1 },
+  });
+  applyGameLogDelta(state, {
+    colorHex: "#223697",
+    cards: { grain: -2, ore: -3 },
+  });
+  const row = state.logHandByColorHex["#223697"];
+  assert.equal(row.grain, 0);
+  assert.equal(row.ore, 0);
+  assert.equal(row.unknown, 0);
+});
+
+test("multi-unknown same resource (two ore from two steals)", () => {
+  const row = {
+    lumber: 0,
+    brick: 0,
+    wool: 0,
+    grain: 0,
+    ore: 1,
+    unknown: 2,
+  };
+  row.ore -= 3;
+  reconcileUnknownFromTypedDeficits(row);
+  assert.equal(row.ore, 0);
+  assert.equal(row.unknown, 0);
 });
 
 test("resolveFeedHexForColorId uses runtime mapping when available", () => {

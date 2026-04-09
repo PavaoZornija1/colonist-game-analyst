@@ -697,6 +697,40 @@ function formatCardsDeltaInline(cards) {
   return out.join(", ");
 }
 
+/** Max ms between `game-log-line.t` and related `game-log.t` (same `processLine` batch). */
+const GAME_LOG_LINE_MATCH_WINDOW_MS = 900;
+
+/** `game-log-line` omits `cards`. Match only `game-log` rows from the same moment — same full message repeats across turns (e.g. `… grain×1`). */
+function cardsDeltaFromMatchingGameLog(events, msgTrim, lineTime) {
+  if (!msgTrim) return "";
+  const lineT = Number(lineTime);
+  const useTime = Number.isFinite(lineT) && lineT > 0;
+  const parts = [];
+  for (const ev of events) {
+    if (ev?.kind !== "game-log" || typeof ev?.detail?.message !== "string") continue;
+    const r = String(ev.detail.message).trim();
+    if (!r || msgTrim !== r) continue;
+    if (!useTime) {
+      const d = formatCardsDeltaInline(ev.detail?.cards);
+      return d || "";
+    }
+    const logT = Number(ev.t) || 0;
+    if (logT > 0) {
+      const dt = logT - lineT;
+      if (dt < -150 || dt > GAME_LOG_LINE_MATCH_WINDOW_MS) continue;
+    }
+    const d = formatCardsDeltaInline(ev.detail?.cards);
+    if (d) parts.push(d);
+  }
+  if (parts.length === 0) return "";
+  parts.sort((a, b) => {
+    const na = String(a).trim().startsWith("-") ? 1 : 0;
+    const nb = String(b).trim().startsWith("-") ? 1 : 0;
+    return na - nb;
+  });
+  return parts.join(", ");
+}
+
 function renderHandsGameLog(rawEvents) {
   if (!handsLogWrapEl) return;
   handsLogWrapEl.textContent = "";
@@ -720,8 +754,9 @@ function renderHandsGameLog(rawEvents) {
   for (const ev of rows) {
     const li = document.createElement("li");
     const msg = ev.detail.message;
-    const delta = formatCardsDeltaInline(ev.detail.cards);
     const msgTrim = String(msg).trim();
+    let delta = formatCardsDeltaInline(ev.detail.cards);
+    if (!delta) delta = cardsDeltaFromMatchingGameLog(events, msgTrim, ev.t);
     const changed = resourceMsgs.some((r) => {
       if (!r || !msgTrim) return false;
       if (msgTrim === r) return true;

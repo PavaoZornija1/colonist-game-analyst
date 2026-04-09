@@ -98,9 +98,9 @@
 
   /** Fallback fingerprint when no row data-index is available. */
   function messageFingerprint(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const t = (part.textContent || "").replace(/\s+/g, " ").trim().slice(0, 200);
-    const imgs = [...part.querySelectorAll("img")]
+    const root = feedMessageRoot(el) || el;
+    const t = (root.textContent || "").replace(/\s+/g, " ").trim().slice(0, 280);
+    const imgs = [...root.querySelectorAll("img")]
       .map((i) => {
         const s = i.src || "";
         const seg = s.split("/").pop() || "";
@@ -127,6 +127,20 @@
       .replace(/[:.,;!?]+$/g, "")
       .trim()
       .toLowerCase();
+  }
+
+  /** Same rules as `colonist-tracker.js` — must exist here (isolated IIFE, no module import). */
+  function normalizeColonistChatHex(hex) {
+    if (!hex || typeof hex !== "string") return "";
+    const m = hex.trim().match(/^#?([0-9a-fA-F]{6}|[0-9a-fA-F]{3})$/);
+    if (!m) return "";
+    let h = m[1].toLowerCase();
+    if (h.length === 3)
+      h = h
+        .split("")
+        .map((c) => c + c)
+        .join("");
+    return `#${h}`;
   }
 
   function extractLeadActor(part) {
@@ -174,7 +188,13 @@
       const first = text.split(/\s+/)[0];
       if (first) name = first;
     }
+    /** Keep chat color for “You” so sniff / steals can resolve `logLocalPlayerColorHex`. */
     return { name, hex };
+  }
+
+  /** Feed row root (virtual list item). */
+  function feedMessageRoot(el) {
+    return el && el.closest ? el.closest('[class*="feedMessage"]') || el : el;
   }
 
   function hexForPlayerNameInPart(part, name) {
@@ -197,17 +217,18 @@
   }
 
   /** Victim / trade partner names are sometimes plain text while colored spans omit punctuation. */
-  function hexForPlayerNameLoose(part, name) {
-    let h = hexForPlayerNameInPart(part, name);
+  function hexForPlayerNameLoose(partOrRoot, name) {
+    const root = feedMessageRoot(partOrRoot) || partOrRoot;
+    let h = hexForPlayerNameInPart(root, name);
     if (h) return h;
     const want = normalizePlayerNameToken(name);
     if (!want) return "";
     const head = want.split(/\s+/)[0];
     if (head && head !== want) {
-      h = hexForPlayerNameInPart(part, head);
+      h = hexForPlayerNameInPart(root, head);
       if (h) return h;
     }
-    const spans = part.querySelectorAll('span[style*="color"]');
+    const spans = root.querySelectorAll('span[style*="color"]');
     for (const sp of spans) {
       const t = normalizePlayerNameToken(sp.textContent || "");
       if (!t) continue;
@@ -225,9 +246,10 @@
     return "";
   }
 
-  function countHiddenResourceCardImgs(part) {
+  function countHiddenResourceCardImgs(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
     let n = 0;
-    for (const img of part.querySelectorAll("img")) {
+    for (const img of root.querySelectorAll("img")) {
       const src = img.src || "";
       const alt = ` ${img.alt || ""} `.toLowerCase();
       if (src.includes("card_rescardback") || alt.includes(" resource card ")) n += 1;
@@ -252,40 +274,227 @@
   }
 
   /** Append img-derived resource shorthand so feed lines are not blank after "got" / trade offers. */
-  function resourceSummaryFromImgs(part) {
+  function resourceSummaryFromImgs(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
     const c = cardsDelta();
-    addFromImgs(part, 1, c);
+    addFromImgsFeedRow(root, 1, c);
     if (deltaSum(c) === 0) {
-      addFromHtmlFragments((part.innerHTML || "").split("<img"), 1, c);
+      addFromHtmlFragments((root.innerHTML || "").split("<img"), 1, c);
+    }
+    if (deltaSum(c) === 0) {
+      addFromInlineAlts(root.innerHTML || "", 1, c);
     }
     if (deltaSum(c) === 0) return "";
+    return resourcesToXOfferPhrase(c);
+  }
+
+  /** Dice faces from resource icons, e.g. alt="dice_1" → 1+2 (3). */
+  function diceRollSummaryFromImgs(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
+    const faces = [];
+    for (const img of root.querySelectorAll("img")) {
+      const raw = String(img.getAttribute("alt") || img.alt || "").trim();
+      if (!raw) continue;
+      const compact = raw.replace(/\s+/g, "");
+      let m = /^dice_([1-6])$/i.exec(compact);
+      if (!m) m = /^dice([1-6])$/i.exec(compact);
+      if (m) {
+        faces.push(Number(m[1]));
+        continue;
+      }
+      const m2 = /^dice ([1-6])$/i.exec(raw);
+      if (m2) faces.push(Number(m2[1]));
+    }
+    if (faces.length === 0) return "";
+    const total = faces.reduce((a, b) => a + b, 0);
+    if (faces.length === 1) return String(total);
+    return `${faces.join("+")} (${total})`;
+  }
+
+  /** Map tile / terrain labels to log wording (grain not wheat). */
+  function terrainWordForLog(rawAlt, srcHint) {
+    const alt = String(rawAlt || "").trim().toLowerCase();
+    const src = String(srcHint || "").toLowerCase();
+    let w = "";
+    const tileM = /^([a-z]+)\s+tile$/i.exec(alt);
+    if (tileM) w = tileM[1].toLowerCase();
+    else if (alt.includes("desert")) w = "desert";
+    else if (/\bprob_\d/i.test(alt)) w = "";
+    else if (/tile_(lumber|brick|wool|wheat|grain|ore)/.test(src))
+      w = (src.match(/tile_(lumber|brick|wool|wheat|grain|ore)/) || [])[1] || "";
+    if (w === "wheat") return "grain";
+    if (w === "wood") return "lumber";
+    return w;
+  }
+
+  /** Robber placement: prob_N chit + terrain tile icons (alt / src). */
+  function robberMoveSummaryFromPart(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
+    let pip = "";
+    const terrains = [];
+    for (const img of root.querySelectorAll("img")) {
+      const raw = String(img.getAttribute("alt") || img.alt || "").trim();
+      const src = imgEffectiveSrc(img);
+      if (raw && /robber/i.test(raw)) continue;
+      if (src.includes("icon_robber") || /\/icon_robber/i.test(src)) continue;
+
+      const compact = raw.replace(/\s+/g, "");
+      const pm =
+        /^prob_(\d+)$/i.exec(compact) ||
+        /\/prob_(\d+)\./i.exec(src) ||
+        /prob_(\d+)/i.exec(src);
+      if (pm) {
+        pip = pm[1];
+        continue;
+      }
+      const tw = terrainWordForLog(raw, src);
+      if (tw) terrains.push(tw);
+    }
+    const uniq = [...new Set(terrains)].filter(Boolean);
+    const terrainStr = uniq.join(", ");
+    if (pip && terrainStr) return `chip ${pip} on ${terrainStr} hex`;
+    if (pip) return `number chip ${pip}`;
+    return terrainStr ? `${terrainStr} hex` : "";
+  }
+
+  /** Dev / progress cards after "used" (Knight in tooltip, etc.). */
+  function usedPlaySummaryFromRoot(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
+    for (const img of root.querySelectorAll("img")) {
+      const src = imgEffectiveSrc(img);
+      const raw = String(img.getAttribute("alt") || img.alt || "").trim();
+      const r = raw.toLowerCase();
+      if (src.includes("card_knight") || r === "knight") return "Knight";
+      if (src.includes("year_of_plenty") || r.includes("year of plenty")) return "Year of Plenty";
+      if (src.includes("monopoly") || r.includes("monopoly")) return "Monopoly";
+      if (src.includes("road_building") || src.includes("card_roadbuilding") || r.includes("road building"))
+        return "Road Building";
+    }
+    return "";
+  }
+
+  function resourcesToXOfferPhrase(c) {
     const bits = [];
-    if (c.lumber) bits.push(`wood×${c.lumber}`);
-    if (c.brick) bits.push(`brick×${c.brick}`);
-    if (c.wool) bits.push(`wool×${c.wool}`);
-    if (c.grain) bits.push(`wheat×${c.grain}`);
-    if (c.ore) bits.push(`ore×${c.ore}`);
-    if (c.unknown) bits.push(`?×${c.unknown}`);
+    if (c.lumber) bits.push(`x${c.lumber} lumber`);
+    if (c.brick) bits.push(`x${c.brick} brick`);
+    if (c.wool) bits.push(`x${c.wool} wool`);
+    if (c.grain) bits.push(`x${c.grain} grain`);
+    if (c.ore) bits.push(`x${c.ore} ore`);
+    if (c.unknown) bits.push(`x${c.unknown} unknown`);
     return bits.join(", ");
   }
 
-  function feedDisplayMessage(part) {
-    const base = lineText(part);
+  /** Purchase line: dev card back / alt text → “Development Card”, etc. */
+  function boughtItemLabelFromRoot(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
+    for (const img of root.querySelectorAll("img")) {
+      const src = imgEffectiveSrc(img);
+      const raw = String(img.getAttribute("alt") || img.alt || "").trim();
+      const rl = raw.toLowerCase();
+      if (
+        src.includes("card_devcardback") ||
+        src.includes("devcardback") ||
+        /development\s*card/i.test(raw) ||
+        (src.includes("devcard") && !src.includes("knight"))
+      )
+        return "Development Card";
+      if (src.includes("card_knight") || rl === "knight") return "Knight";
+    }
+    return "";
+  }
+
+  /** "Name wants to give [A] for [B]" — separate HTML segments so we do not mix offer vs ask. */
+  function tradeOfferLineFromRoot(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
+    const html = root.innerHTML || "";
+    const hLower = html.toLowerCase();
+    const wi = hLower.indexOf(SNIPS.wantsGive);
+    if (wi < 0) return "";
+    const rel = hLower.slice(wi);
+    const forM = /\s+for\s+/i.exec(rel);
+    if (!forM) return "";
+    const fi = wi + forM.index;
+    const givePart = html.slice(wi, fi).split(/<img/i);
+    const forPart = html.slice(fi).split(/<img/i);
+    const gave = cardsDelta();
+    const forg = cardsDelta();
+    addFromHtmlFragments(givePart, 1, gave);
+    addFromHtmlFragments(forPart, 1, forg);
+    if (deltaSum(gave) === 0 && deltaSum(forg) === 0) {
+      addFromInlineAlts(html.slice(wi, fi), 1, gave);
+      addFromInlineAlts(html.slice(fi), 1, forg);
+    }
+    if (deltaSum(gave) === 0 && deltaSum(forg) === 0) {
+      mergeCardsFromMarkupChunk(html.slice(wi, fi), gave);
+      mergeCardsFromMarkupChunk(html.slice(fi), forg);
+    }
+    const g = resourcesToXOfferPhrase(gave);
+    const f = resourcesToXOfferPhrase(forg);
+    if (!g || !f) return "";
+    const part = root.querySelector('[class*="messagePart"]') || root;
+    const actor = extractLeadActor(part);
+    const name = ((actor && actor.name) || "Player").trim() || "Player";
+    return `${name} wants to give ${g} for ${f}`.replace(/\s+/g, " ").trim();
+  }
+
+  function feedDisplayMessage(rootOrEl) {
+    const root = feedMessageRoot(rootOrEl) || rootOrEl;
+    const base = lineText(root);
     if (!base) return base;
     const lower = base.toLowerCase();
+    const isPlayerTradeLine =
+      lower.includes(" gave ") &&
+      lower.includes(" and got ") &&
+      lower.includes(" from ");
+
+    if (lower.includes(SNIPS.wantsGive) && /\bfor\b/i.test(lower)) {
+      const offer = tradeOfferLineFromRoot(root);
+      if (offer) return offer;
+      /** Avoid misleading “— res×” appended from `resourceSummaryFromImgs` when offer parse fails. */
+      return base;
+    }
+
+    if (/\b used\b/i.test(lower)) {
+      const play = usedPlaySummaryFromRoot(root);
+      if (play && !lower.includes(play.toLowerCase()))
+        return `${base} — ${play}`.replace(/\s+/g, " ").trim();
+    }
+
+    if (/\brolled\b/.test(lower)) {
+      const diceStr = diceRollSummaryFromImgs(root);
+      if (diceStr) return `${base} — ${diceStr}`.replace(/\s+/g, " ").trim();
+    }
+
+    if (lower.includes("robber") && lower.includes("moved")) {
+      const rob = robberMoveSummaryFromPart(root);
+      if (rob) return `${base.replace(/\s+to\s*$/i, "").trim()} — ${rob}`.replace(/\s+/g, " ").trim();
+    }
+
+    if (lower.includes(SNIPS.bought)) {
+      const item = boughtItemLabelFromRoot(root);
+      if (item && !lower.includes(item.toLowerCase()))
+        return `${base} ${item}`.replace(/\s+/g, " ").trim();
+    }
+
     const wantsImgSummary =
-      lower.includes("wants to give") ||
-      lower.includes(" got ") ||
-      lower.includes(" received ") ||
-      lower.includes(" stole ") ||
-      lower.includes("starting resource") ||
-      lower.includes("gave bank") ||
-      lower.includes("discarded") ||
-      lower.includes(" traded with: ");
+      !isPlayerTradeLine &&
+      (lower.includes("wants to give") ||
+        /\bgot\b/i.test(lower) ||
+        /\breceived\b/i.test(lower) ||
+        /\bstole\b/i.test(lower) ||
+        lower.includes("starting resource") ||
+        lower.includes("gave bank") ||
+        lower.includes("discarded") ||
+        lower.includes(" traded with: "));
     if (!wantsImgSummary) return base;
-    const extra = resourceSummaryFromImgs(part);
+    const extra = resourceSummaryFromImgs(root);
     if (!extra) return base;
-    return `${base} — ${extra}`.replace(/\s+/g, " ").trim();
+    return `${base} ${extra}`.replace(/\s+/g, " ").trim();
+  }
+
+  /** Same string as `sendFeedLine(feedDisplayMessage(el))` — required for pairing `game-log` ↔ line in the sidepanel. */
+  function feedHandMessage(rootOrEl) {
+    return feedDisplayMessage(rootOrEl);
   }
 
   function sendHand(detail) {
@@ -363,23 +572,112 @@
     return s.includes("happy settling");
   }
 
-  function addFromImgs(el, sign, into) {
+  function imgEffectiveSrc(img) {
+    const raw =
+      img.currentSrc ||
+      img.src ||
+      img.getAttribute("src") ||
+      img.getAttribute("data-src") ||
+      img.getAttribute("data-lazy-src") ||
+      "";
+    return String(raw).toLowerCase();
+  }
+
+  /** Colonist uses `alt="Lumber"`, `alt="Wool"`, etc. — normalize for comparisons. */
+  function normalizeResourceLabelToken(raw) {
+    let s = String(raw ?? "").trim();
+    try {
+      if (typeof s.normalize === "function") s = s.normalize("NFKC");
+    } catch {
+      /* ignore */
+    }
+    return s.toLowerCase().replace(/\s+/g, " ");
+  }
+
+  function imgAltToken(img) {
+    const a =
+      (img && (img.alt ?? img.getAttribute?.("alt") ?? img.getAttribute?.("ALT"))) || "";
+    return normalizeResourceLabelToken(a);
+  }
+
+  function isNonResourceIconLabel(tokNorm) {
+    return /resource\s*card|cardback|rescardback|dice|settlement|road|robber|longest|ship|city|knight|monopoly|year|\bdev\b/i.test(
+      tokNorm,
+    );
+  }
+
+  /** Avatars, dice, map tiles, robber, dev plays — not production “got” resource cards. */
+  function skipImgForResourceCardCounting(img) {
+    const src = imgEffectiveSrc(img);
+    const altRaw = String(img.getAttribute("alt") || img.alt || "").trim();
+    const alt = altRaw.toLowerCase().replace(/\s+/g, " ");
+    if (src.includes("icon_player_loggedin")) return true;
+    if (src.includes("icon_bot") || src.includes("icon_player")) return true;
+    if (src.includes("dice_") || src.includes("/dice")) return true;
+    if (src.includes("prob_") || /^prob_[0-9]+$/i.test(altRaw.replace(/\s+/g, ""))) return true;
+    if (src.includes("icon_robber") || (src.includes("robber") && !src.includes("card"))) return true;
+    if (/tile_(lumber|brick|wool|wheat|grain|ore|desert)/.test(src)) return true;
+    if (/\b(lumber|brick|wool|wheat|grain|ore|desert)\s+tile\b/i.test(altRaw)) return true;
+    if (src.includes("settlement") && !src.includes("card")) return true;
+    if (src.includes("city") && !src.includes("card") && !src.includes("dev")) return true;
+    if (
+      (src.includes("road") || /\broad\b/.test(alt)) &&
+      !src.includes("card_road") &&
+      !src.includes("cardroad")
+    )
+      return true;
+    if (src.includes("card_knight") || /^knight$/i.test(altRaw.trim())) return true;
+    if (src.includes("devcard") || src.includes("dev_card") || src.includes("card_dev")) return true;
+    if (src.includes("longest") || src.includes("largest")) return true;
+    if (src.includes("ship") && !src.includes("card")) return true;
+    return false;
+  }
+
+  function addFromImgsFeedRow(rootEl, sign, into) {
+    const root = feedMessageRoot(rootEl) || rootEl;
+    addFromImgs(root, sign, into, skipImgForResourceCardCounting);
+  }
+
+  /** Map normalized alt/title text (any casing) to card counts. */
+  function applyResourceLabelTextToCards(labelRaw, sign, into) {
+    const t = normalizeResourceLabelToken(labelRaw);
+    if (!t || isNonResourceIconLabel(t)) return;
+    if (/\b(lumber|wood)\b/.test(t)) into.lumber += sign;
+    else if (/\bbrick\b/.test(t)) into.brick += sign;
+    else if (/\bwool\b/.test(t)) into.wool += sign;
+    else if (/\b(grain|wheat)\b/.test(t)) into.grain += sign;
+    else if (/\bore\b/.test(t)) into.ore += sign;
+  }
+
+  function addFromImgs(el, sign, into, skipImgFn) {
     for (const img of el.querySelectorAll("img")) {
-      const srcRaw = img.src || "";
-      const src = srcRaw.toLowerCase();
-      const alt = ` ${img.alt || ""} `.toLowerCase();
+      if (typeof skipImgFn === "function" && skipImgFn(img)) continue;
+      const src = imgEffectiveSrc(img);
+      const altTok = imgAltToken(img);
+      const alt = ` ${altTok} `;
       if (src.includes("card_rescardback") || alt.includes(" resource card ")) continue;
       if (
         src.includes("card_lumber") ||
         src.includes("lumber") ||
         src.includes("wood") ||
         alt.includes(" lumber ") ||
-        alt.includes(" wood ")
+        alt.includes(" wood ") ||
+        /\b(lumber|wood)\b/.test(altTok)
       )
         into.lumber += sign;
-      else if (src.includes("card_brick") || src.includes("brick") || alt.includes(" brick "))
+      else if (
+        src.includes("card_brick") ||
+        src.includes("brick") ||
+        alt.includes(" brick ") ||
+        /\bbrick\b/.test(altTok)
+      )
         into.brick += sign;
-      else if (src.includes("card_wool") || src.includes("wool") || alt.includes(" wool "))
+      else if (
+        src.includes("card_wool") ||
+        src.includes("wool") ||
+        alt.includes(" wool ") ||
+        /\bwool\b/.test(altTok)
+      )
         into.wool += sign;
       else if (
         src.includes("card_grain") ||
@@ -387,10 +685,16 @@
         src.includes("grain") ||
         src.includes("wheat") ||
         alt.includes(" grain ") ||
-        alt.includes(" wheat ")
+        alt.includes(" wheat ") ||
+        /\b(grain|wheat)\b/.test(altTok)
       )
         into.grain += sign;
-      else if (src.includes("card_ore") || alt.includes(" ore ")) into.ore += sign;
+      else if (
+        src.includes("card_ore") ||
+        alt.includes(" ore ") ||
+        /\bore\b/.test(altTok)
+      )
+        into.ore += sign;
     }
   }
 
@@ -398,17 +702,52 @@
     for (const frag of parts) {
       const f = String(frag || "").toLowerCase();
       if (f.includes("card_rescardback") || f.includes("alt=\"resource card\"")) into.unknown += sign;
-      else if (f.includes("card_wool") || f.includes("alt=\"wool\"")) into.wool += sign;
-      else if (f.includes("card_lumber") || f.includes("alt=\"lumber\"")) into.lumber += sign;
-      else if (f.includes("card_brick") || f.includes("alt=\"brick\"")) into.brick += sign;
+      else if (
+        f.includes("card_wool") ||
+        f.includes("alt=\"wool\"") ||
+        f.includes("alt='wool'")
+      )
+        into.wool += sign;
+      else if (
+        f.includes("card_lumber") ||
+        f.includes("alt=\"lumber\"") ||
+        f.includes("alt='lumber'")
+      )
+        into.lumber += sign;
+      else if (
+        f.includes("card_brick") ||
+        f.includes("alt=\"brick\"") ||
+        f.includes("alt='brick'")
+      )
+        into.brick += sign;
       else if (
         f.includes("card_grain") ||
         f.includes("card_wheat") ||
         f.includes("alt=\"grain\"") ||
-        f.includes("alt=\"wheat\"")
+        f.includes("alt=\"wheat\"") ||
+        f.includes("alt='grain'") ||
+        f.includes("alt='wheat'")
       )
         into.grain += sign;
-      else if (f.includes("card_ore") || f.includes("alt=\"ore\"")) into.ore += sign;
+      else if (
+        f.includes("card_ore") ||
+        f.includes("alt=\"ore\"") ||
+        f.includes("alt='ore'")
+      )
+        into.ore += sign;
+    }
+  }
+
+  /**
+   * Scan raw HTML for alt=… (any attribute casing: ALT="Lumber", alt='WOOL').
+   * `i` flag so `alt` matches `ALT`. (Title omitted to avoid double-count with alt.)
+   */
+  function addFromInlineAlts(html, sign, into) {
+    const htmlStr = String(html || "");
+    const re = /\balt\s*=\s*["']([^"']*)["']/gi;
+    let m;
+    while ((m = re.exec(htmlStr)) !== null) {
+      applyResourceLabelTextToCards(m[1], sign, into);
     }
   }
 
@@ -476,25 +815,46 @@
    */
   /** "Name received starting resources [cards]" (initial deal in feed). */
   function parseReceivedStartingResources(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
     const lower = (part.textContent || "").toLowerCase();
     if (!lower.includes("starting resource")) return;
     const actor = extractLeadActor(part);
     const dest = actorDestination(el, actor);
     if (!dest) return;
     const c = cardsDelta();
-    addFromImgs(part, 1, c);
+    addFromImgsFeedRow(root, 1, c);
     if (deltaSum(c) === 0) {
-      addFromHtmlFragments((part.innerHTML || "").split("<img"), 1, c);
+      addFromHtmlFragments((root.innerHTML || "").split("<img"), 1, c);
+    }
+    if (deltaSum(c) === 0) {
+      addFromInlineAlts(root.innerHTML || "", 1, c);
     }
     if (deltaSum(c) === 0) return;
-    sendHand({ ...dest, cards: c, message: msg });
+    sendHand({ ...dest, cards: c, message: feedHandMessage(root) });
+  }
+
+  function mergeCardsFromMarkupChunk(markup, into) {
+    const s = String(markup || "");
+    if (!s.trim()) return;
+    const before = deltaSum(into);
+    try {
+      const w = document.createElement("div");
+      w.innerHTML = s;
+      addFromImgs(w, 1, into);
+    } catch {
+      /* ignore */
+    }
+    if (deltaSum(into) === before) {
+      addFromHtmlFragments(s.split(/<img/i), 1, into);
+      addFromInlineAlts(s, 1, into);
+    }
   }
 
   function parseGaveAndGotFromPlayer(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
+    const logMsg = feedHandMessage(root);
     const text = part.textContent || "";
     const lower = text.toLowerCase();
     const gaveI = lower.indexOf(" gave ");
@@ -509,6 +869,7 @@
     const fromHi = hi.indexOf(" from ", andGotHi + 1);
     if (gaveHi < 0 || andGotHi < 0 || fromHi < 0) return;
 
+    const FROM_SNIP = " from ";
     const gaveHtml = html.slice(gaveHi + " gave ".length, andGotHi);
     const gotHtml = html.slice(andGotHi + " and got ".length, fromHi);
 
@@ -517,54 +878,89 @@
     if (!actorDest) return;
 
     const gaveC = cardsDelta();
-    addFromHtmlFragments(gaveHtml.split("<img"), 1, gaveC);
+    mergeCardsFromMarkupChunk(gaveHtml, gaveC);
     const gotC = cardsDelta();
-    addFromHtmlFragments(gotHtml.split("<img"), 1, gotC);
+    mergeCardsFromMarkupChunk(gotHtml, gotC);
 
-    const partnerName = text.slice(fromI + " from ".length).trim();
+    /**
+     * Colonist often renders “X gave and got from Y” with icons only after Y’s name
+     * (no cards between “gave” / “and got” / “from”). Split trailing imgs: first half = gave, second half = got.
+     */
+    if (deltaSum(gaveC) === 0 && deltaSum(gotC) === 0) {
+      const tailRaw = html.slice(fromHi + FROM_SNIP.length);
+      const tailParts = tailRaw.split(/<img\b/i);
+      if (tailParts.length > 2) {
+        const imgBlobs = tailParts.slice(1).map((frag) => "<img" + frag);
+        const n = imgBlobs.length;
+        if (n >= 2) {
+          const half = Math.floor(n / 2);
+          if (half > 0 && n - half > 0) {
+            mergeCardsFromMarkupChunk(imgBlobs.slice(0, half).join(""), gaveC);
+            mergeCardsFromMarkupChunk(imgBlobs.slice(half).join(""), gotC);
+          }
+        }
+      }
+    }
+
+    let partnerName = text.slice(fromI + FROM_SNIP.length).trim();
+    const partnerHead = partnerName.split(/\s+/)[0] || partnerName;
+    partnerName = partnerHead;
     const partnerNorm = normalizePlayerNameToken(partnerName);
     const partnerHex =
       partnerNorm === "bank" || partnerNorm.startsWith("bank ")
         ? ""
-        : hexForPlayerNameLoose(part, partnerName);
+        : hexForPlayerNameLoose(root, partnerName);
+
+    function sendToPartner(cards) {
+      for (const k of Object.keys(cards)) {
+        const n = cards[k];
+        if (!n) continue;
+        if (partnerNorm === "you") {
+          sendHand({ targetYou: true, cards: { [k]: n }, message: logMsg });
+        } else if (partnerHex) {
+          sendHand({ colorHex: partnerHex, cards: { [k]: n }, message: logMsg });
+        }
+      }
+    }
 
     for (const k of Object.keys(gaveC)) {
       if (!gaveC[k]) continue;
-      sendHand({ ...actorDest, cards: { [k]: -gaveC[k] }, message: msg });
-      if (partnerHex) sendHand({ colorHex: partnerHex, cards: { [k]: gaveC[k] }, message: msg });
+      sendHand({ ...actorDest, cards: { [k]: -gaveC[k] }, message: logMsg });
+      sendToPartner({ [k]: gaveC[k] });
     }
     for (const k of Object.keys(gotC)) {
       if (!gotC[k]) continue;
-      sendHand({ ...actorDest, cards: { [k]: gotC[k] }, message: msg });
-      if (partnerHex) sendHand({ colorHex: partnerHex, cards: { [k]: -gotC[k] }, message: msg });
+      sendHand({ ...actorDest, cards: { [k]: gotC[k] }, message: logMsg });
+      sendToPartner({ [k]: -gotC[k] });
     }
   }
 
   function parseGot(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
     const text = part.textContent || "";
     const lower = text.toLowerCase();
     if (lower.includes(" gave ") && lower.includes(" and got ") && lower.includes(" from ")) return;
     if (lower.includes("starting resource")) return;
-    const gotAt = lower.indexOf(" got ");
-    const recvAt = lower.indexOf(" received ");
-    if (gotAt < 0 && recvAt < 0) return;
+    if (!/\bgot\b/i.test(lower) && !/\breceived\b/i.test(lower)) return;
     const actor = extractLeadActor(part);
     const dest = actorDestination(el, actor);
     if (!dest) return;
     const c = cardsDelta();
-    addFromImgs(part, 1, c);
+    addFromImgsFeedRow(root, 1, c);
     if (deltaSum(c) === 0) {
-      addFromHtmlFragments((part.innerHTML || "").split("<img"), 1, c);
+      addFromHtmlFragments((root.innerHTML || "").split("<img"), 1, c);
+    }
+    if (deltaSum(c) === 0) {
+      addFromInlineAlts(root.innerHTML || "", 1, c);
     }
     if (deltaSum(c) === 0) return;
-    sendHand({ ...dest, cards: c, message: msg });
+    sendHand({ ...dest, cards: c, message: feedHandMessage(root) });
   }
 
   function parseDiscard(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
     const raw = part.textContent || "";
     const lower = raw.toLowerCase();
     const i = lower.indexOf("discarded");
@@ -573,21 +969,25 @@
     const dest = actorDestination(el, actor);
     if (!dest) return;
     const c = cardsDelta();
-    addFromImgs(part, -1, c);
+    addFromImgsFeedRow(root, -1, c);
     if (deltaSum(c) === 0) return;
-    sendHand({ ...dest, cards: c, message: msg });
+    sendHand({ ...dest, cards: c, message: feedHandMessage(root) });
   }
 
   function parseBuilt(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
     const lower = (part.textContent || "").toLowerCase();
-    const isPieceLine =
-      lower.includes("built a ") ||
-      lower.includes("built an ") ||
-      lower.includes("placed a ") ||
-      lower.includes("placed an ");
-    if (!isPieceLine) return;
+    const isPlaced =
+      lower.includes("placed a ") || lower.includes("placed an ");
+    const isBuilt =
+      lower.includes("built a ") || lower.includes("built an ");
+    if (!isPlaced && !isBuilt) return;
+    /**
+     * Colonist uses “placed” for setup (free) and “built” for main game (paid).
+     * Do not deduct cards for “placed …”.
+     */
+    if (isPlaced && !isBuilt) return;
     const actor = extractLeadActor(part);
     const dest = actorDestination(el, actor);
     if (!dest) return;
@@ -622,12 +1022,12 @@
       c.ore -= 3;
     }
     if (deltaSum(c) === 0) return;
-    sendHand({ ...dest, cards: c, message: msg });
+    sendHand({ ...dest, cards: c, message: feedHandMessage(root) });
   }
 
   function parseBought(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
     const text = (part.textContent || "").toLowerCase();
     if (!text.includes(SNIPS.bought)) return;
     const actor = extractLeadActor(part);
@@ -666,20 +1066,20 @@
       sendHand({
         ...dest,
         cards: { lumber: 0, brick: 0, wool: -1, grain: -1, ore: -1, unknown: 0 },
-        message: msg,
+        message: feedHandMessage(root),
       });
     }
   }
 
   function parseBankTrade(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
     const textLower = (part.textContent || "").toLowerCase();
     if (!textLower.includes(SNIPS.gaveBank)) return;
     const actor = extractLeadActor(part);
     const dest = actorDestination(el, actor);
     if (!dest) return;
-    const html = part.innerHTML;
+    const html = root.innerHTML;
     const hi = html.toLowerCase();
     let gi = hi.indexOf("gave bank:");
     if (gi < 0) gi = hi.indexOf(SNIPS.gaveBank);
@@ -694,7 +1094,7 @@
     addFromHtmlFragments(gavePart, -1, c);
     addFromHtmlFragments(tookPart, 1, c);
     if (deltaSum(c) === 0) return;
-    sendHand({ ...dest, cards: c, message: msg });
+    sendHand({ ...dest, cards: c, message: feedHandMessage(root) });
   }
 
   /**
@@ -706,8 +1106,9 @@
   }
 
   function parsePlayerTrade(el, prev) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
+    const logMsg = feedHandMessage(root);
     const text = part.textContent || "";
     if (!text.includes(SNIPS.tradedWith) || !prev) return;
     const parts = text.split(SNIPS.tradedWith);
@@ -715,10 +1116,10 @@
     const actor = extractLeadActor(part);
     const actorDest = actorDestination(el, actor);
     if (!actorDest) return;
-    const hexB = hexForPlayerNameLoose(part, agreeing);
+    const hexB = hexForPlayerNameLoose(root, agreeing);
     if (!hexB) return;
-    const prevPart = prev.querySelector('[class*="messagePart"]') || prev;
-    const html = prevPart.innerHTML || "";
+    const prevRoot = feedMessageRoot(prev) || prev;
+    const html = prevRoot.innerHTML || "";
     const hLower = html.toLowerCase();
     const wi = hLower.indexOf(SNIPS.wantsGive);
     const fi = hLower.indexOf(SNIPS.giveFor, wi + 1);
@@ -731,66 +1132,100 @@
     addFromHtmlFragments(forPart, 1, forg);
     for (const k of Object.keys(gave)) {
       if (gave[k]) {
-        sendHand({ ...actorDest, cards: { [k]: -gave[k] }, message: msg });
-        sendHand({ colorHex: hexB, cards: { [k]: gave[k] }, message: msg });
+        sendHand({ ...actorDest, cards: { [k]: -gave[k] }, message: logMsg });
+        sendHand({ colorHex: hexB, cards: { [k]: gave[k] }, message: logMsg });
       }
     }
     for (const k of Object.keys(forg)) {
       if (forg[k]) {
-        sendHand({ colorHex: hexB, cards: { [k]: -forg[k] }, message: msg });
-        sendHand({ ...actorDest, cards: { [k]: forg[k] }, message: msg });
+        sendHand({ colorHex: hexB, cards: { [k]: -forg[k] }, message: logMsg });
+        sendHand({ ...actorDest, cards: { [k]: forg[k] }, message: logMsg });
       }
     }
   }
 
   /** "Crow stole [card] from Smitt" — card back → unknown; specific art → typed. */
   function parseStoleLine(el) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
+    const logMsg = feedHandMessage(root);
     const text = part.textContent || "";
     const lower = text.toLowerCase();
     const stoleAt = lower.indexOf(" stole ");
     const fromAt = lower.lastIndexOf(" from ");
     if (stoleAt < 0 || fromAt < 0 || fromAt <= stoleAt) return;
-    const stealer = extractLeadActor(part);
-    const stealerDest = actorDestination(el, stealer);
-    if (!stealerDest) return;
+    let stealerDest;
+    const lead = lower.trimStart();
+    if (lead.startsWith("you stole ") || /^you\s+stole\b/.test(lead)) {
+      const actor = extractLeadActor(part);
+      const hx = normalizeColonistChatHex(actor.hex);
+      stealerDest = hx ? { targetYou: true, colorHex: hx } : { targetYou: true };
+    } else {
+      const stealer = extractLeadActor(part);
+      if (normalizePlayerNameToken(stealer.name) === "you") {
+        const hx = normalizeColonistChatHex(stealer.hex);
+        stealerDest = hx ? { targetYou: true, colorHex: hx } : { targetYou: true };
+      } else {
+        stealerDest = actorDestination(el, stealer);
+        if (!stealerDest) return;
+      }
+    }
     const victimName = text.slice(fromAt + SNIPS.stoleFrom.length).trim();
     if (!victimName) return;
     const victimNorm = normalizePlayerNameToken(victimName);
-    const victimHex = victimNorm === "you" ? "" : hexForPlayerNameLoose(part, victimName);
+    const victimHex = victimNorm === "you" ? "" : hexForPlayerNameLoose(root, victimName);
     const gain = cardsDelta();
-    addFromImgs(part, 1, gain);
-    const hidden = countHiddenResourceCardImgs(part);
+    addFromImgsFeedRow(root, 1, gain);
+    if (deltaSum(gain) === 0) {
+      addFromHtmlFragments((root.innerHTML || "").split("<img"), 1, gain);
+    }
+    if (deltaSum(gain) === 0) {
+      addFromInlineAlts(root.innerHTML || "", 1, gain);
+    }
+    const hidden = countHiddenResourceCardImgs(root);
     let typed = false;
     for (const k of Object.keys(gain)) {
       if (gain[k] > 0) typed = true;
     }
+    const victimTag =
+      victimNorm === "you" || !victimName
+        ? {}
+        : { player: victimName.split(/\s+/)[0] || victimName };
     if (typed) {
       for (const k of Object.keys(gain)) {
         const n = gain[k];
         if (n <= 0) continue;
-        sendHand({ ...stealerDest, cards: { [k]: n }, message: msg });
+        sendHand({ ...stealerDest, cards: { [k]: n }, message: logMsg });
         if (victimNorm === "you") {
-          sendHand({ targetYou: true, cards: { [k]: -n }, message: msg });
+          sendHand({ targetYou: true, cards: { [k]: -n }, message: logMsg });
         } else if (victimHex) {
-          sendHand({ colorHex: victimHex, cards: { [k]: -n }, message: msg });
+          sendHand({
+            colorHex: victimHex,
+            ...victimTag,
+            cards: { [k]: -n },
+            message: logMsg,
+          });
         }
       }
     } else if (hidden > 0) {
-      sendHand({ ...stealerDest, cards: { unknown: hidden }, message: msg });
+      sendHand({ ...stealerDest, cards: { unknown: hidden }, message: logMsg });
       if (victimNorm === "you") {
-        sendHand({ targetYou: true, cards: { unknown: -hidden }, message: msg });
+        sendHand({ targetYou: true, cards: { unknown: -hidden }, message: logMsg });
       } else if (victimHex) {
-        sendHand({ colorHex: victimHex, cards: { unknown: -hidden }, message: msg });
+        sendHand({
+          colorHex: victimHex,
+          ...victimTag,
+          cards: { unknown: -hidden },
+          message: logMsg,
+        });
       }
     }
   }
 
   function processLine(el, prev) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
-    const msg = lineText(part);
-    sendFeedLine(feedDisplayMessage(part));
+    const root = feedMessageRoot(el) || el;
+    const msg = lineText(root);
+    sendFeedLine(feedDisplayMessage(root));
     if (isMatchStartLine(msg)) {
       const now = Date.now();
       if (now - lastResetSentAt > 15000) {
@@ -798,49 +1233,59 @@
         sendMatchResetMeta();
       }
     }
-    sniffLocalPlayerFromRow(el);
-    parseReceivedStartingResources(el);
-    parseGaveAndGotFromPlayer(el);
-    parseGot(el);
-    parseDiscard(el);
-    parseBuilt(el);
-    parseBought(el);
-    parseBankTrade(el);
-    parseWantsGiveFor(el);
-    parsePlayerTrade(el, prev);
-    parseStoleLine(el);
-    parseStoleLegacy(el, prev);
+    try {
+      sniffLocalPlayerFromRow(el);
+      parseReceivedStartingResources(el);
+      parseGaveAndGotFromPlayer(el);
+      parseGot(el);
+      parseDiscard(el);
+      parseBuilt(el);
+      parseBought(el);
+      parseBankTrade(el);
+      parseWantsGiveFor(el);
+      parsePlayerTrade(el, prev);
+      parseStoleLine(el);
+      parseStoleLegacy(el, prev);
+    } catch (e) {
+      const m = e?.message || String(e);
+      console.warn("[Colonist analyst] game-log processLine:", m);
+    }
   }
 
   function parseStoleLegacy(el, prev) {
-    const part = el.querySelector('[class*="messagePart"]') || el;
+    const root = feedMessageRoot(el) || el;
+    const part = root.querySelector('[class*="messagePart"]') || root;
     const text = part.textContent || "";
     if (!text.toLowerCase().includes("stole:") || !prev) return;
-    const prevPart = prev.querySelector('[class*="messagePart"]') || prev;
+    const prevRoot = feedMessageRoot(prev) || prev;
+    const prevPart = prevRoot.querySelector('[class*="messagePart"]') || prevRoot;
     const prevText = prevPart.textContent || "";
     if (!prevText.includes(" stole from: ")) return;
     const involved = prevText.replace(" stole from: ", " ").trim().split(/\s+/);
     const stealerName = involved[0];
     const victimName = involved[1];
-    const stealerHex = hexForPlayerNameLoose(prevPart, stealerName);
-    const victimHex = hexForPlayerNameLoose(prevPart, victimName);
+    const stealerHex = hexForPlayerNameLoose(prevRoot, stealerName);
+    const victimHex = hexForPlayerNameLoose(prevRoot, victimName);
     const gain = cardsDelta();
-    addFromImgs(part, 1, gain);
-    const hidden = countHiddenResourceCardImgs(part);
+    addFromImgsFeedRow(root, 1, gain);
+    const hidden = countHiddenResourceCardImgs(root);
     let typed = false;
     for (const k of Object.keys(gain)) {
       if (gain[k] > 0) typed = true;
     }
+    const legacyMsg = feedHandMessage(root);
     if (typed && stealerHex) {
       for (const k of Object.keys(gain)) {
         const n = gain[k];
         if (n <= 0) continue;
-        sendHand({ colorHex: stealerHex, cards: { [k]: n } });
-        if (victimHex) sendHand({ colorHex: victimHex, cards: { [k]: -n } });
+        sendHand({ colorHex: stealerHex, cards: { [k]: n }, message: legacyMsg });
+        if (victimHex)
+          sendHand({ colorHex: victimHex, cards: { [k]: -n }, message: legacyMsg });
       }
     } else if (hidden > 0 && stealerHex) {
-      sendHand({ colorHex: stealerHex, cards: { unknown: hidden } });
-      if (victimHex) sendHand({ colorHex: victimHex, cards: { unknown: -hidden } });
+      sendHand({ colorHex: stealerHex, cards: { unknown: hidden }, message: legacyMsg });
+      if (victimHex)
+        sendHand({ colorHex: victimHex, cards: { unknown: -hidden }, message: legacyMsg });
     }
   }
 

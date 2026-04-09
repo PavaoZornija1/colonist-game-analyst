@@ -903,6 +903,36 @@ function emptyFeedHandRow() {
   return { lumber: 0, brick: 0, wool: 0, grain: 0, ore: 0, unknown: 0 };
 }
 
+const FEED_HAND_TYPED_KEYS = ["lumber", "brick", "wool", "grain", "ore"];
+
+/**
+ * After a spend, typed counts can sit negative while face-down steals live in `unknown`.
+ * When sum of deficits ≤ unknown, those cards are uniquely determined — move them from
+ * unknown into the typed buckets (100% inference; same as covering shortfalls one-for-one).
+ * @param {Record<string, number>} row
+ */
+export function reconcileUnknownFromTypedDeficits(row) {
+  if (!row || typeof row !== "object") return row;
+  let deficitSum = 0;
+  /** @type {Record<string, number>} */
+  const fix = {};
+  for (const k of FEED_HAND_TYPED_KEYS) {
+    const v = Number(row[k]);
+    if (!Number.isFinite(v) || v >= 0) continue;
+    const d = -v;
+    fix[k] = d;
+    deficitSum += d;
+  }
+  if (deficitSum === 0) return row;
+  const u = Number(row.unknown);
+  if (!Number.isFinite(u) || u < deficitSum) return row;
+  for (const k of FEED_HAND_TYPED_KEYS) {
+    if (fix[k]) row[k] = Number(row[k]) + fix[k];
+  }
+  row.unknown = u - deficitSum;
+  return row;
+}
+
 /**
  * Apply one feed-derived hand delta (keyed by Colonist name-color hex).
  * @param {ReturnType<typeof initialTrackerState>} state
@@ -914,7 +944,25 @@ export function applyGameLogDelta(state, detail) {
 
   let hex = "";
   if (detail.targetYou === true) {
-    hex = normalizeColonistChatHex(state.logLocalPlayerColorHex);
+    /** Prefer event-scoped hex (e.g. “You stole” span color) over cached local. */
+    hex =
+      normalizeColonistChatHex(detail.colorHex) ||
+      normalizeColonistChatHex(state.logLocalPlayerColorHex);
+    if (
+      !hex &&
+      state.feedHexByColorId &&
+      typeof state.feedHexByColorId === "object" &&
+      state.localWireColorId != null
+    ) {
+      hex = normalizeColonistChatHex(
+        state.feedHexByColorId[String(state.localWireColorId)],
+      );
+    }
+    if (!hex && state.localWireColorId != null) {
+      const cid = Number(state.localWireColorId);
+      const defHex = COLONIST_CHAT_HEX_BY_COLOR_ID[cid];
+      hex = normalizeColonistChatHex(defHex);
+    }
   } else {
     hex = normalizeColonistChatHex(detail.colorHex);
   }
@@ -931,15 +979,17 @@ export function applyGameLogDelta(state, detail) {
   }
   if (typeof detail.player === "string") {
     const nm = detail.player.trim();
-    if (nm) state.feedNameByHex[hex] = nm;
+    /** Ignore UI placeholder “You” so steals don’t replace a real name (e.g. Doria). */
+    if (nm && nm.toLowerCase() !== "you") state.feedNameByHex[hex] = nm;
   }
   const row = state.logHandByColorHex[hex];
   const std = ["lumber", "brick", "wool", "grain", "ore", "unknown"];
   for (const k of std) {
-    const v = detail.cards[k];
-    if (typeof v !== "number" || v === 0) continue;
+    const v = Number(detail.cards[k]);
+    if (!Number.isFinite(v) || v === 0) continue;
     row[k] = (row[k] || 0) + v;
   }
+  reconcileUnknownFromTypedDeficits(row);
   state.logEventCount = (state.logEventCount || 0) + 1;
   state.logUpdatedAt = Date.now();
   return state;
