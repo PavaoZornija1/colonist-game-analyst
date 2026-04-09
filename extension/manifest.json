@@ -1,9 +1,9 @@
 {
   "manifest_version": 3,
   "name": "Colonist Game Analyst",
-  "version": "0.5.5",
+  "version": "0.5.13",
   "description": "Read-only analyst for colonist.io — WS (JSON/MessagePack), game log deltas, bank, dev cards, pieces.",
-  "permissions": ["scripting", "sidePanel", "storage"],
+  "permissions": ["scripting", "sidePanel", "storage", "tabs"],
   "host_permissions": [
     "https://colonist.io/*",
     "https://*.colonist.io/*",

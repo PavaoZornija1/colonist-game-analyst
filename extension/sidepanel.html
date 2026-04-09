@@ -8,8 +8,16 @@
   </head>
   <body>
     <header class="header">
-      <h1 class="title">Colonist Analyst</h1>
-      <p class="subtitle">Bank, hands, pieces, and socket traffic — while you play</p>
+      <div class="header-top">
+        <h1 class="title">Colonist Analyst</h1>
+        <div class="header-actions">
+          <button type="button" id="theme-toggle" class="btn btn-small" aria-label="Toggle theme">
+            Toggle theme
+          </button>
+          <button type="button" id="clear-top" class="btn btn-small btn-primary">Clear all</button>
+        </div>
+      </div>
+      <p class="subtitle">Track hands, bank, pieces, and game flow while you play.</p>
     </header>
 
     <div id="onboard-banner" class="onboard-banner" hidden>
@@ -23,54 +31,37 @@
     <main class="dashboard">
       <section class="panel section-card">
         <h2 class="section-title">Game snapshot</h2>
-        <p class="hint tiny glance-hint">
-          Turn, timer, and sequence from state diffs. Numbers are raw wire enums unless noted.
-        </p>
+        <p class="hint tiny glance-hint">Current turn, timer, and latest game updates.</p>
         <div id="game-glance-grid" class="glance-grid"></div>
       </section>
 
       <section class="panel section-card">
         <h2 class="section-title">Dice <span class="section-badge">history</span></h2>
-        <p class="hint tiny">
-          Rolls use merged <code>diceState</code> plus <code>gameLogState</code> lines with
-          <code>type: 10</code> when the server splits dice across fields.
-        </p>
+        <p class="hint tiny">Recent rolls in this match.</p>
         <div id="dice-history-wrap" class="dice-history-wrap"></div>
       </section>
 
       <section class="panel section-card">
-        <h2 class="section-title">Trades &amp; production <span class="section-badge">wire</span></h2>
-        <p class="hint tiny">
-          <code>tradeState</code> mirrors player trade offers; type <strong>28</strong> payloads list who
-          received which resource card on a roll (<code>distributionType</code> explained below).
-        </p>
+        <h2 class="section-title">Trades &amp; production</h2>
+        <p class="hint tiny">Open trade offers and latest resource payouts.</p>
         <div id="trade-wire-wrap" class="trade-wire-wrap"></div>
       </section>
 
       <section class="panel section-card">
         <h2 class="section-title">Victory &amp; awards</h2>
-        <p class="hint tiny">
-          Public VP is the <strong>sum</strong> of numeric entries in <code>victoryPointsState</code> when
-          the wire sends multiple components.
-        </p>
+        <p class="hint tiny">Visible victory points plus Longest Road / Largest Army.</p>
         <div id="vp-wrap" class="table-wrap table-elevated"></div>
       </section>
 
       <section class="panel section-card">
         <h2 class="section-title">Quick insights</h2>
-        <p class="hint tiny">
-          Simple bank / hand heuristics — not move advice. Robber discard tips: default when over
-          <strong>7</strong> (8+ cards); when we infer a <strong>2-player</strong> Colonist table, when at
-          <strong>≥10</strong> cards.
-        </p>
+        <p class="hint tiny">Helpful alerts for common risk and scarcity situations.</p>
         <ul id="heuristics-list" class="insights-list"></ul>
       </section>
 
       <section id="unknown-keys-section" class="panel section-card" hidden>
-        <h2 class="section-title">Wire debug</h2>
-        <p class="hint tiny">
-          Top-level <code>diff</code> keys we do not parse yet (for Colonist protocol updates).
-        </p>
+        <h2 class="section-title">Debug</h2>
+        <p class="hint tiny">Advanced troubleshooting information.</p>
         <div id="unknown-keys-wrap" class="unknown-keys-wrap"></div>
       </section>
 
@@ -83,32 +74,28 @@
       </section>
 
       <section class="panel tracker-panel section-card">
-        <h2 class="section-title">Hands</h2>
+        <div class="panel-head panel-head--hands">
+          <h2 class="section-title">Hands</h2>
+          <button type="button" id="hands-label-toggle" class="btn btn-small">
+            Show player names
+          </button>
+        </div>
         <div id="wire-hands-wrap" class="table-wrap table-elevated"></div>
+        <div class="hands-log-note hint tiny">
+          Resource changes happen here when relevant activity feed messages are parsed.
+        </div>
+        <div id="hands-log-wrap" class="hands-log-wrap"></div>
       </section>
 
       <section class="panel tracker-panel section-card">
         <h2 class="section-title">Development cards</h2>
-        <details class="hint-details">
-          <summary>What this shows</summary>
-          <p class="hint tiny">
-            Deck remaining from <code>bankDevelopmentCards.cards</code> (stack length on the wire).
-            Played types from <code>developmentCardsUsed</code>. Base Catan uses 25 development cards;
-            scenarios vary.
-          </p>
-        </details>
+        <p class="hint tiny">Deck remaining and played development cards.</p>
         <div id="dev-cards" class="dev-cards-panel"></div>
       </section>
 
       <section class="panel tracker-panel section-card">
         <h2 class="section-title">Pieces</h2>
-        <details class="hint-details">
-          <summary>What this shows</summary>
-          <p class="hint tiny">
-            Supply remaining from mechanic state (base limits 15 / 5 / 4 for roads · settlements ·
-            cities; expansions may differ).
-          </p>
-        </details>
+        <p class="hint tiny">Roads, settlements, and cities left per player.</p>
         <div id="pieces-wrap" class="table-wrap table-elevated"></div>
       </section>
 
@@ -117,32 +104,32 @@
           <div class="toolbar-main">
             <label class="toggle">
               <input type="checkbox" id="pause" />
-              <span class="toggle-label">Pause log</span>
+              <span class="toggle-label">Pause updates</span>
             </label>
             <button type="button" id="clear" class="btn btn-primary">Clear all</button>
           </div>
           <span id="status" class="status-pill" role="status">Waiting for events…</span>
         </section>
         <div class="panel-head panel-head--log">
-          <h2 class="section-title">Recent socket events</h2>
+          <h2 class="section-title">Activity log</h2>
         </div>
         <div class="log-toolbar">
           <input
             type="search"
             id="log-search"
             class="log-search"
-            placeholder="Filter by text…"
+            placeholder="Filter activity…"
             autocomplete="off"
             spellcheck="false"
             aria-label="Filter socket log"
           />
           <label class="toggle toggle-inline">
             <input type="checkbox" id="hide-heartbeats" checked />
-            <span class="toggle-label">Hide keep-alive (id 136 · 36-byte sends)</span>
+            <span class="toggle-label">Hide keep-alive traffic</span>
           </label>
           <label class="toggle toggle-inline">
             <input type="checkbox" id="hide-binary-ws" checked />
-            <span class="toggle-label">Hide binary / opaque WS frames</span>
+            <span class="toggle-label">Hide unreadable binary frames</span>
           </label>
           <button type="button" id="export-json" class="btn">Export JSON</button>
         </div>

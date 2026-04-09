@@ -15,17 +15,22 @@ import {
   devCardLabel,
   feedHandRowForColorId,
   colorIdFromColonistChatHex,
+  resolveFeedHexForColorId,
+  COLONIST_CHAT_COLOR_LABEL_BY_HEX,
 } from "./colonist-tracker.js";
 
 const SESSION_KEY = "colonistAnalystEvents";
+const HANDS_LOG_SESSION_KEY = "colonistAnalystHandsLogEvents";
 const ONBOARD_KEY = "colonistAnalystOnboardDismissed";
 
 const logEl = document.getElementById("log");
 const statusEl = document.getElementById("status");
 const pauseEl = document.getElementById("pause");
 const clearEl = document.getElementById("clear");
+const clearTopEl = document.getElementById("clear-top");
 const bankGridEl = document.getElementById("bank-grid");
 const wireHandsWrapEl = document.getElementById("wire-hands-wrap");
+const handsLogWrapEl = document.getElementById("hands-log-wrap");
 const devCardsEl = document.getElementById("dev-cards");
 const piecesWrapEl = document.getElementById("pieces-wrap");
 const trackerMetaEl = document.getElementById("tracker-meta");
@@ -42,11 +47,21 @@ const logSearchEl = document.getElementById("log-search");
 const hideHeartbeatsEl = document.getElementById("hide-heartbeats");
 const hideBinaryWsEl = document.getElementById("hide-binary-ws");
 const exportJsonBtn = document.getElementById("export-json");
+const themeToggleBtn = document.getElementById("theme-toggle");
+const handsLabelToggleBtn = document.getElementById("hands-label-toggle");
 
 const MAX_ITEMS = 200;
+const THEME_KEY = "colonistAnalystTheme";
+const HANDS_LABEL_MODE_KEY = "colonistAnalystHandsLabelMode";
 
 const HANDS_TABLE_HEAD =
   '<thead><tr><th scope="col">Player</th><th scope="col" class="col-num">Lumber</th><th scope="col" class="col-num">Brick</th><th scope="col" class="col-num">Wool</th><th scope="col" class="col-num">Grain</th><th scope="col" class="col-num">Ore</th><th scope="col" class="col-num">Unknown</th></tr></thead>';
+
+function colorLabelForSeat(state, colorId) {
+  const hx = resolveFeedHexForColorId(state, colorId);
+  if (hx && COLONIST_CHAT_COLOR_LABEL_BY_HEX[hx]) return COLONIST_CHAT_COLOR_LABEL_BY_HEX[hx];
+  return playerLabel(colorId);
+}
 
 function renderUnifiedHands(state) {
   if (!wireHandsWrapEl) return;
@@ -56,6 +71,8 @@ function renderUnifiedHands(state) {
   const wireIds = Object.keys(pmap).sort((a, b) => Number(a) - Number(b));
   const byHex =
     state.logHandByColorHex && typeof state.logHandByColorHex === "object" ? state.logHandByColorHex : {};
+  const nameByHex =
+    state.feedNameByHex && typeof state.feedNameByHex === "object" ? state.feedNameByHex : {};
 
   if (wireIds.length === 0) {
     const hexKeys = Object.keys(byHex);
@@ -63,7 +80,7 @@ function renderUnifiedHands(state) {
       const ph = document.createElement("p");
       ph.className = "hint tiny";
       ph.textContent =
-        "No seats yet from the game socket, and no feed totals. Open a match and scroll the activity feed.";
+        "No player data yet. Start a match and keep the game activity visible.";
       wireHandsWrapEl.appendChild(ph);
       return;
     }
@@ -76,7 +93,7 @@ function renderUnifiedHands(state) {
       const cid = colorIdFromColonistChatHex(hex);
       const label =
         cid != null
-          ? escapeHtml(playerLabel(cid))
+          ? escapeHtml(colorLabelForSeat(state, cid))
           : escapeHtml(`Feed ${hex}`);
       const tr = document.createElement("tr");
       tr.innerHTML = `<td>${label}</td><td class="col-num">${r.lumber ?? 0}</td><td class="col-num">${r.brick ?? 0}</td><td class="col-num">${r.wool ?? 0}</td><td class="col-num">${r.grain ?? 0}</td><td class="col-num">${r.ore ?? 0}</td><td class="col-num">${r.unknown ?? 0}</td>`;
@@ -96,7 +113,10 @@ function renderUnifiedHands(state) {
     const pl = pmap[id];
     const colorId = pl.colorId != null ? Number(pl.colorId) : Number(id);
     const r = feedHandRowForColorId(state, colorId);
-    const label = `${escapeHtml(playerLabel(colorId))} <span class="muted">(#${escapeHtml(id)})</span>`;
+    const hx = resolveFeedHexForColorId(state, colorId);
+    const seenName = hx && typeof nameByHex[hx] === "string" ? nameByHex[hx] : "";
+    const head = handsLabelMode === "names" && seenName ? seenName : colorLabelForSeat(state, colorId);
+    const label = `${escapeHtml(head)} <span class="muted">(#${escapeHtml(id)})</span>`;
     const tr = document.createElement("tr");
     tr.innerHTML = `<td>${label}</td><td class="col-num">${r.lumber ?? 0}</td><td class="col-num">${r.brick ?? 0}</td><td class="col-num">${r.wool ?? 0}</td><td class="col-num">${r.grain ?? 0}</td><td class="col-num">${r.ore ?? 0}</td><td class="col-num">${r.unknown ?? 0}</td>`;
     wtb.appendChild(tr);
@@ -108,9 +128,11 @@ function renderUnifiedHands(state) {
 
 /** Latest raw buffer from storage (or paused snapshot while paused). */
 let lastEventList = [];
+let lastHandsLogEventList = [];
 
 /** Snapshot frozen when "Pause log" is enabled. */
 let pausedCopy = null;
+let handsLabelMode = "colors";
 
 function setStatus(text) {
   statusEl.textContent = text;
@@ -204,23 +226,23 @@ function renderGameGlance(state) {
   }
 
   if (cs.completedTurns != null) {
-    addChip("Turns completed (wire)", String(cs.completedTurns));
-    addChip("Human turn # (1-based)", String(Number(cs.completedTurns) + 1));
+    addChip("Rounds completed", String(cs.completedTurns));
+    addChip("Current round", String(Number(cs.completedTurns) + 1));
   }
   if (cs.currentTurnPlayerColor != null) {
-    addChip("Current turn", playerLabel(cs.currentTurnPlayerColor));
+    addChip("Current turn", colorLabelForSeat(state, cs.currentTurnPlayerColor));
   }
   if (cs.turnState != null || cs.actionState != null) {
-    addChip("Turn / action", `t=${cs.turnState ?? "—"} · a=${cs.actionState ?? "—"}`);
+    addChip("Phase", `${cs.turnState ?? "—"} · ${cs.actionState ?? "—"}`);
   }
   if (cs.timeLeftInState != null) {
     addChip("Timer (s)", String(cs.timeLeftInState));
   }
   if (state.lastWireSequence != null) {
-    addChip("Wire sequence", String(state.lastWireSequence));
+    addChip("Update", String(state.lastWireSequence));
   }
   if (state.robberTileIndex != null && typeof state.robberTileIndex === "number") {
-    addChip("Robber tile", String(state.robberTileIndex));
+    addChip("Robber location", String(state.robberTileIndex));
   }
   const dh = state.diceHistory;
   if (Array.isArray(dh) && dh.length > 0) {
@@ -232,21 +254,21 @@ function renderGameGlance(state) {
     const p = document.createElement("p");
     p.className = "hint tiny";
     p.style.margin = "0";
-    p.textContent = "No snapshot yet — open an active game and wait for state diffs (type 91).";
+    p.textContent = "No game snapshot yet. Keep a live match tab open.";
     gameGlanceGridEl.appendChild(p);
   } else if (cs.completedTurns != null) {
     const note = document.createElement("p");
     note.className = "hint tiny glance-turn-note";
     note.textContent =
-      "`completedTurns` is the server counter from `currentState` (full cycles on the wire, not every micro-action). The 1-based number is for quick reading only.";
+      "Turn counter is based on the game's internal round tracking.";
     gameGlanceGridEl.appendChild(note);
   }
 }
 
-function formatTradeResponses(responses) {
+function formatTradeResponses(state, responses) {
   if (!responses || typeof responses !== "object") return "";
   const parts = Object.entries(responses)
-    .map(([pid, code]) => `${playerLabel(Number(pid))}=${code}`)
+    .map(([pid, code]) => `${colorLabelForSeat(state, Number(pid))}=${code}`)
     .join(", ");
   return parts ? `responses: ${parts}` : "";
 }
@@ -257,28 +279,44 @@ function renderTradeWire(state) {
 
   const hintDist = document.createElement("p");
   hintDist.className = "hint tiny trade-hint-dist";
-  hintDist.textContent = DISTRIBUTION_TYPE_HINT;
+  hintDist.textContent = "Shows recent payouts and current trade offers.";
   tradeWireWrapEl.appendChild(hintDist);
 
   const hProd = document.createElement("h3");
   hProd.className = "subh";
-  hProd.textContent = "Last production (type 28)";
+  hProd.textContent = "Latest production";
   tradeWireWrapEl.appendChild(hProd);
 
   const prod = state.lastProductionDistribution;
   if (!prod || !prod.summary) {
     const p = document.createElement("p");
     p.className = "hint tiny";
-    p.textContent = "No production frame yet — appears on each roll’s resource grant list.";
+    p.textContent = "No recent production event yet.";
     tradeWireWrapEl.appendChild(p);
   } else {
     const p = document.createElement("p");
     p.className = "trade-line";
-    let line = prod.summary;
-    if (Array.isArray(prod.distributionTypes) && prod.distributionTypes.length) {
-      line += ` · dist types: ${prod.distributionTypes.join(", ")}`;
+    let line = "";
+    if (Array.isArray(prod.rows) && prod.rows.length > 0) {
+      line = prod.rows
+        .map((r) => {
+          const owner =
+            r && r.owner != null ? colorLabelForSeat(state, r.owner) : "Unknown";
+          const card = r && typeof r.card === "string" ? r.card : "card";
+          const dt =
+            r && typeof r.distributionType === "number"
+              ? ` [dist ${r.distributionType}]`
+              : "";
+          return `${owner} \u2190 ${card}${dt}`;
+        })
+        .join(" \u00b7 ");
+    } else {
+      line = prod.summary;
     }
-    if (prod.sequence != null) line += ` · seq ${prod.sequence}`;
+    if (Array.isArray(prod.distributionTypes) && prod.distributionTypes.length) {
+      line += ` · modes: ${prod.distributionTypes.join(", ")}`;
+    }
+    if (prod.sequence != null) line += ` · update ${prod.sequence}`;
     p.textContent = line;
     tradeWireWrapEl.appendChild(p);
   }
@@ -288,14 +326,14 @@ function renderTradeWire(state) {
 
   const hAct = document.createElement("h3");
   hAct.className = "subh";
-  hAct.textContent = "Open offers (tradeState.activeOffers)";
+  hAct.textContent = "Open offers";
   tradeWireWrapEl.appendChild(hAct);
 
   const actives = Object.entries(active).filter(([, v]) => v && typeof v === "object");
   if (actives.length === 0) {
     const p = document.createElement("p");
     p.className = "hint tiny";
-    p.textContent = "No active rows on the mirror — the wire clears slots with null when an offer closes.";
+    p.textContent = "No open trade offers right now.";
     tradeWireWrapEl.appendChild(p);
   } else {
     const ul = document.createElement("ul");
@@ -305,8 +343,8 @@ function renderTradeWire(state) {
       if (o.creator != null) {
         const off = formatResourceEnumList(o.offeredResources);
         const want = formatResourceEnumList(o.wantedResources);
-        let line = `${id}: ${playerLabel(o.creator)} offers ${off || "—"} for ${want || "—"}`;
-        const fr = formatTradeResponses(o.playerResponses);
+        let line = `${id}: ${colorLabelForSeat(state, o.creator)} offers ${off || "—"} for ${want || "—"}`;
+        const fr = formatTradeResponses(state, o.playerResponses);
         if (fr) line += ` · ${fr}`;
         li.textContent = line;
       } else {
@@ -321,12 +359,12 @@ function renderTradeWire(state) {
   const closedRows = Object.entries(closed).filter(([, v]) => v && typeof v === "object");
   const hCl = document.createElement("h3");
   hCl.className = "subh";
-  hCl.textContent = "Closed offers (tradeState.closedOffers)";
+  hCl.textContent = "Recent completed offers";
   tradeWireWrapEl.appendChild(hCl);
   if (closedRows.length === 0) {
     const p = document.createElement("p");
     p.className = "hint tiny";
-    p.textContent = "No closed-offer snapshots on the mirror yet.";
+    p.textContent = "No completed trade snapshots yet.";
     tradeWireWrapEl.appendChild(p);
   } else {
     const ul = document.createElement("ul");
@@ -342,7 +380,7 @@ function renderTradeWire(state) {
     if (closedRows.length > 8) {
       const more = document.createElement("p");
       more.className = "hint tiny";
-      more.textContent = `…and ${closedRows.length - 8} older closed slot(s) in storage.`;
+      more.textContent = `...and ${closedRows.length - 8} older closed trades.`;
       tradeWireWrapEl.appendChild(more);
     }
   }
@@ -350,7 +388,7 @@ function renderTradeWire(state) {
   if (state.tradeWireUpdatedAt != null) {
     const foot = document.createElement("p");
     foot.className = "hint tiny trade-meta";
-    foot.textContent = `Trade mirror last updated: ${new Date(state.tradeWireUpdatedAt).toLocaleTimeString()}`;
+    foot.textContent = `Updated: ${new Date(state.tradeWireUpdatedAt).toLocaleTimeString()}`;
     tradeWireWrapEl.appendChild(foot);
   }
 }
@@ -363,7 +401,7 @@ function renderDiceHistory(state) {
     p.className = "hint tiny";
     p.style.margin = "0";
     p.textContent =
-      "Rolls fill from type-91 diffs: we take the last diceState with diceThrown in each frame (gameLog type 10 is a fallback). Open a live game tab so the extension can decode WS traffic.";
+      "No dice rolls yet.";
     diceHistoryWrapEl.appendChild(p);
     return;
   }
@@ -392,7 +430,7 @@ function renderVP(state) {
     const p = document.createElement("p");
     p.className = "hint tiny";
     p.style.margin = "0";
-    p.textContent = "VP and award markers show when included in player / mechanic state.";
+    p.textContent = "No visible victory updates yet.";
     vpWrapEl.appendChild(p);
     return;
   }
@@ -404,7 +442,7 @@ function renderVP(state) {
   for (const id of rows) {
     const pl = players[id];
     const tr = document.createElement("tr");
-    const name = playerLabel(pl.colorId ?? Number(id));
+    const name = colorLabelForSeat(state, pl.colorId ?? Number(id));
     tr.innerHTML = `<td>${escapeHtml(name)} <span class="muted">(#${escapeHtml(id)})</span></td><td class="col-num">${pl.victoryPointsPublic ?? "—"}</td><td class="col-num">${pl.longestRoad ?? "—"}</td><td class="col-num">${pl.largestArmy ?? "—"}</td>`;
     tb.appendChild(tr);
   }
@@ -491,6 +529,7 @@ function renderTracker(raw) {
   }
 
   renderUnifiedHands(state);
+  renderHandsGameLog(lastHandsLogEventList);
 
   devCardsEl.textContent = "";
   const deckCard = document.createElement("div");
@@ -538,7 +577,7 @@ function renderTracker(raw) {
     const p = document.createElement("p");
     p.className = "hint tiny";
     p.textContent =
-      "Deck count appears when the wire sends mechanicDevelopmentCardsState.bankDevelopmentCards.";
+      "Deck count will appear after the game sends it.";
     deckCard.appendChild(p);
     const refLine = STANDARD_DEV_DECK_COMPOSITION.map((r) => `${r.count} ${r.label}`).join(" · ");
     const refP = document.createElement("p");
@@ -559,7 +598,7 @@ function renderTracker(raw) {
   if (keys.length === 0) {
     const p = document.createElement("p");
     p.className = "hint tiny";
-    p.textContent = "No developmentCardsUsed entries yet.";
+    p.textContent = "No played development cards yet.";
     playedWrap.appendChild(p);
   } else {
     const grid = document.createElement("div");
@@ -593,7 +632,7 @@ function renderTracker(raw) {
       const used = pl.developmentCardsUsed;
       if (!Array.isArray(used) || used.length === 0) continue;
       const dt = document.createElement("dt");
-      dt.textContent = `${playerLabel(pl.colorId ?? Number(id))} (#${id})`;
+      dt.textContent = `${colorLabelForSeat(state, pl.colorId ?? Number(id))} (#${id})`;
       const dd = document.createElement("dd");
       const devParts = Object.entries(summarizeDevUsed(used))
         .sort(([a], [b]) => a.localeCompare(b))
@@ -614,7 +653,7 @@ function renderTracker(raw) {
   if (ids.length === 0) {
     const p = document.createElement("p");
     p.className = "hint tiny";
-    p.textContent = "No per-player piece data yet — mechanic state arrives in socket diffs.";
+    p.textContent = "No piece data yet.";
     piecesWrapEl.appendChild(p);
   } else {
     const table = document.createElement("table");
@@ -629,7 +668,7 @@ function renderTracker(raw) {
     for (const id of ids) {
       const pl = players[id];
       const tr = document.createElement("tr");
-      const name = playerLabel(pl.colorId ?? Number(id));
+      const name = colorLabelForSeat(state, pl.colorId ?? Number(id));
       const label = `${escapeHtml(name)} <span class="muted">(#${escapeHtml(id)})</span>`;
       let html = `<td>${label}</td>`;
       html += `<td>${escapeHtml(formatPieceCell(pl.bankRoadAmount, DEFAULT_PIECE_LIMITS.road))}</td>`;
@@ -644,6 +683,56 @@ function renderTracker(raw) {
     table.appendChild(tbody);
     piecesWrapEl.appendChild(table);
   }
+}
+
+function formatCardsDeltaInline(cards) {
+  const out = [];
+  const order = ["lumber", "brick", "wool", "grain", "ore", "unknown"];
+  for (const k of order) {
+    const n = Number(cards?.[k] || 0);
+    if (!n) continue;
+    const sign = n > 0 ? "+" : "";
+    out.push(`${sign}${n} ${k}`);
+  }
+  return out.join(", ");
+}
+
+function renderHandsGameLog(rawEvents) {
+  if (!handsLogWrapEl) return;
+  handsLogWrapEl.textContent = "";
+  const events = Array.isArray(rawEvents) ? rawEvents : [];
+  const resourceMsgs = events
+    .filter((ev) => ev?.kind === "game-log" && typeof ev?.detail?.message === "string")
+    .map((ev) => String(ev.detail.message).trim());
+  const rows = events
+    .filter((ev) => ev?.kind === "game-log-line" && typeof ev?.detail?.message === "string")
+    .slice(0, 120)
+    .reverse();
+  if (rows.length === 0) {
+    const p = document.createElement("p");
+    p.className = "hint tiny";
+    p.textContent = "No game log lines captured yet.";
+    handsLogWrapEl.appendChild(p);
+    return;
+  }
+  const ul = document.createElement("ul");
+  ul.className = "hands-log-list";
+  for (const ev of rows) {
+    const li = document.createElement("li");
+    const msg = ev.detail.message;
+    const delta = formatCardsDeltaInline(ev.detail.cards);
+    const msgTrim = String(msg).trim();
+    const changed = resourceMsgs.some((r) => {
+      if (!r || !msgTrim) return false;
+      if (msgTrim === r) return true;
+      return msgTrim.startsWith(r);
+    });
+    li.textContent = changed
+      ? `${msg}  [resource change${delta ? `: ${delta}` : ""}]`
+      : msg;
+    ul.appendChild(li);
+  }
+  handsLogWrapEl.appendChild(ul);
 }
 
 function makeRow(payload) {
@@ -703,9 +792,11 @@ function formatDetail(detail) {
 }
 
 function loadSession() {
-  chrome.storage.session.get([SESSION_KEY, TRACKER_STORAGE_KEY], (data) => {
+  chrome.storage.session.get([SESSION_KEY, TRACKER_STORAGE_KEY, HANDS_LOG_SESSION_KEY], (data) => {
     lastEventList = Array.isArray(data[SESSION_KEY]) ? data[SESSION_KEY] : [];
+    lastHandsLogEventList = Array.isArray(data[HANDS_LOG_SESSION_KEY]) ? data[HANDS_LOG_SESSION_KEY] : [];
     renderLogFiltered();
+    renderHandsGameLog(lastHandsLogEventList);
     renderTracker(data[TRACKER_STORAGE_KEY]);
   });
 }
@@ -717,12 +808,21 @@ chrome.storage.onChanged.addListener((changes, area) => {
     renderTracker(changes[TRACKER_STORAGE_KEY].newValue);
   }
 
-  if (!changes[SESSION_KEY]) return;
-  if (pauseEl.checked) return;
-  const next = changes[SESSION_KEY].newValue;
-  if (Array.isArray(next)) {
-    lastEventList = next;
-    renderLogFiltered();
+  if (changes[HANDS_LOG_SESSION_KEY]?.newValue != null) {
+    const hnext = changes[HANDS_LOG_SESSION_KEY].newValue;
+    if (Array.isArray(hnext)) {
+      lastHandsLogEventList = hnext;
+      renderHandsGameLog(lastHandsLogEventList);
+    }
+  }
+
+  if (changes[SESSION_KEY]?.newValue != null) {
+    if (pauseEl.checked) return;
+    const next = changes[SESSION_KEY].newValue;
+    if (Array.isArray(next)) {
+      lastEventList = next;
+      renderLogFiltered();
+    }
   }
 });
 
@@ -738,25 +838,31 @@ pauseEl.addEventListener("change", () => {
   }
 });
 
-clearEl.addEventListener("click", () => {
+function clearAllSessionData() {
   chrome.storage.session.set(
     {
       [SESSION_KEY]: [],
+      [HANDS_LOG_SESSION_KEY]: [],
       [TRACKER_STORAGE_KEY]: initialTrackerState(),
     },
     () => {
       pausedCopy = pauseEl.checked ? [] : null;
       lastEventList = [];
+      lastHandsLogEventList = [];
       logSearchEl.value = "";
       hideHeartbeatsEl.checked = true;
       hideBinaryWsEl.checked = true;
       logEl.textContent = "";
+      renderHandsGameLog([]);
       renderTracker(initialTrackerState());
       renderLogFiltered();
       setStatus("Cleared");
     },
   );
-});
+}
+
+clearEl.addEventListener("click", clearAllSessionData);
+if (clearTopEl) clearTopEl.addEventListener("click", clearAllSessionData);
 
 logSearchEl.addEventListener("input", () => {
   renderLogFiltered();
@@ -810,6 +916,25 @@ function initOnboard() {
   onboardBanner.hidden = false;
 }
 
+function applyTheme(theme) {
+  const root = document.documentElement;
+  if (theme === "light" || theme === "dark") {
+    root.setAttribute("data-theme", theme);
+    if (themeToggleBtn) themeToggleBtn.textContent = theme === "light" ? "Use dark mode" : "Use light mode";
+  } else {
+    root.removeAttribute("data-theme");
+    if (themeToggleBtn) themeToggleBtn.textContent = "Toggle theme";
+  }
+}
+
+function applyHandsLabelMode(mode) {
+  handsLabelMode = mode === "names" ? "names" : "colors";
+  if (handsLabelToggleBtn) {
+    handsLabelToggleBtn.textContent =
+      handsLabelMode === "names" ? "Show color labels" : "Show player names";
+  }
+}
+
 onboardDismiss.addEventListener("click", () => {
   try {
     localStorage.setItem(ONBOARD_KEY, "1");
@@ -819,13 +944,46 @@ onboardDismiss.addEventListener("click", () => {
   onboardBanner.hidden = true;
 });
 
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener("click", () => {
+    const current = document.documentElement.getAttribute("data-theme");
+    const next = current === "light" ? "dark" : "light";
+    applyTheme(next);
+    try {
+      localStorage.setItem(THEME_KEY, next);
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+if (handsLabelToggleBtn) {
+  handsLabelToggleBtn.addEventListener("click", () => {
+    const next = handsLabelMode === "names" ? "colors" : "names";
+    applyHandsLabelMode(next);
+    try {
+      localStorage.setItem(HANDS_LABEL_MODE_KEY, next);
+    } catch {
+      /* ignore */
+    }
+    chrome.storage.session.get([TRACKER_STORAGE_KEY], (data) => {
+      renderTracker(data[TRACKER_STORAGE_KEY] ?? initialTrackerState());
+    });
+  });
+}
+
 initOnboard();
+applyHandsLabelMode("colors");
 try {
   if (localStorage.getItem("colonistAnalystHideBinary") === "0") {
     hideBinaryWsEl.checked = false;
   }
+  const savedTheme = localStorage.getItem(THEME_KEY);
+  if (savedTheme === "light" || savedTheme === "dark") applyTheme(savedTheme);
+  const savedHandsMode = localStorage.getItem(HANDS_LABEL_MODE_KEY);
+  applyHandsLabelMode(savedHandsMode === "names" ? "names" : "colors");
 } catch {
   /* ignore */
 }
 loadSession();
-setStatus("Open a colonist.io game tab; events fill the buffer.");
+setStatus("Open a Colonist tab to start tracking.");

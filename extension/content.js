@@ -6,6 +6,9 @@
 (function colonistAnalystContent() {
   "use strict";
 
+  if (window.__colonistAnalystContentPatched) return;
+  window.__colonistAnalystContentPatched = true;
+
   const MESSAGE_SOURCE = "colonist-game-analyst";
 
   /**
