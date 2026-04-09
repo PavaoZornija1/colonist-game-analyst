@@ -10,6 +10,7 @@ All notable changes to **Colonist Game Analyst** are tracked here. The **shippin
 - **Chrome Web Store** helper: [`docs/CHROME_WEB_STORE.md`](docs/CHROME_WEB_STORE.md) (listing copy, permissions text, zip instructions).
 - Hostable **[`docs/privacy-policy.html`](docs/privacy-policy.html)** for the store privacy URL (add contact + publish over HTTPS).
 - **`npm run pack-extension`** — zip the `extension` folder for upload.
+- **GitHub Releases:** [`.github/workflows/release.yml`](.github/workflows/release.yml) attaches `colonist-game-analyst-extension.zip` when you push a `v*` tag; see [`docs/GITHUB_FIRST_RELEASE.md`](docs/GITHUB_FIRST_RELEASE.md).
 
 ## [0.5.36] - 2026-04-09
 

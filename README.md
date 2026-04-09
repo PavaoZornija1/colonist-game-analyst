@@ -37,6 +37,8 @@ If you publish **GitHub Releases** (or any download link), others can:
 
 That is a normal way many extensions reach users when the **Chrome Web Store developer signup** is not available in their country.
 
+**Automated GitHub Releases:** push a version tag (e.g. `v0.5.37`) and [Actions](.github/workflows/release.yml) will attach a fresh zip. Steps: **[docs/GITHUB_FIRST_RELEASE.md](docs/GITHUB_FIRST_RELEASE.md)**.
+
 ## Usage tips
 
 - Keep the **game tab** focused enough that the feed and WebSocket stay active.

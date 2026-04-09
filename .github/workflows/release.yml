@@ -1,0 +1,30 @@
+# Build extension zip and attach it to the Git tag release.
+# Usage: git tag v0.5.37 && git push origin v0.5.37
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  attach-zip:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Pack extension folder
+        run: cd extension && zip -r ../colonist-game-analyst-extension.zip . -x "*.DS_Store"
+
+      - name: Create release and upload zip
+        uses: softprops/action-gh-release@v2
+        with:
+          files: colonist-game-analyst-extension.zip
+          generate_release_notes: true
+          body: |
+            **How to install:** Download **`colonist-game-analyst-extension.zip`** → unzip → Chrome **`chrome://extensions`** → turn on **Developer mode** → **Load unpacked** → pick the folder that contains **`manifest.json`**.
+
+            More detail: [README — Install from a release zip](${{ github.server_url }}/${{ github.repository }}/blob/main/README.md#install-from-a-release-zip-no-store)
